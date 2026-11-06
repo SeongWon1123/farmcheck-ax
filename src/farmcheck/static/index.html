@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="farmcheck-base-path" content="__BASE_PATH__">
+<title>팜체크 · 녹차 기록 검토와 인수인계</title>
+<link rel="stylesheet" href="static/style.css">
+</head>
+<body data-pane="list">
+<a class="skip" href="#main">본문으로 건너뛰기</a>
+<header class="top">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div>
+      <h1>팜체크</h1>
+      <p class="brand-sub">녹차 기록 검토·인수인계</p>
+    </div>
+  </div>
+  <div class="top-badges" id="topBadges" aria-live="polite"></div>
+  <nav class="tabs" aria-label="주요 화면">
+    <button type="button" class="tab" data-view="records" aria-current="page">기록</button>
+    <button type="button" class="tab" data-view="handover">인수인계</button>
+    <button type="button" class="tab" data-view="rules">규칙·AgentStream</button>
+  </nav>
+</header>
+<div id="notice" class="notice" role="alert" hidden></div>
+<main id="main" tabindex="-1">
+  <section id="viewRecords" class="view records-view" aria-label="기록 검토">
+    <aside class="list-pane" aria-label="기록 목록">
+      <div id="summary" class="summary"></div>
+      <form id="filterForm" class="filters" role="search">
+        <label class="field">
+          <span>목록 범위</span>
+          <select id="filterSelect">
+            <option value="candidates">확인 후보</option>
+            <option value="all">전체 기록</option>
+            <option value="needs_review">재검토 필요</option>
+            <option value="held">보류</option>
+            <option value="resolved">해소 처리</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>검색(ID·경로)</span>
+          <input id="searchInput" type="search" autocomplete="off">
+        </label>
+        <button type="submit" class="btn">조회</button>
+      </form>
+      <div id="listBody" class="list-body" aria-busy="true"></div>
+      <div id="pager" class="pager"></div>
+    </aside>
+    <article class="detail-pane" id="detail" aria-live="polite" aria-label="기록 상세"></article>
+  </section>
+  <section id="viewHandover" class="view" hidden aria-label="인수인계"></section>
+  <section id="viewRules" class="view" hidden aria-label="규칙과 AgentStream"></section>
+</main>
+<script src="static/app.js" defer></script>
+</body>
+</html>
