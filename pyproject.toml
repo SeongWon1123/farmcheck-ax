@@ -1,0 +1,53 @@
+[project]
+name = "farmcheck"
+version = "0.1.0"
+description = "Evidence-linked review and handover of green-tea cultivation records."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.30,<1",
+  "pydantic>=2.8,<3",
+  "httpx2>=2.14,<3",
+  "anyio>=4.6,<5",
+  "pillow>=10.4,<13",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8,<10",
+  "ruff>=0.9",
+  "basedpyright>=1.29",
+  "httpx>=0.28,<1",
+]
+presentation = ["python-pptx>=1,<2"]
+deployment = ["supervisor>=4,<5; sys_platform != 'win32'"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/farmcheck"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = ["D203", "D213", "COM812"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "PLR2004"]
+
+[tool.basedpyright]
+pythonVersion = "3.12"
+typeCheckingMode = "all"
+include = ["src", "tests"]
+venvPath = "."
+venv = ".venv"
