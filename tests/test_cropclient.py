@@ -1,5 +1,4 @@
 # Copyright (c) 2026 Farmcheck contributors.
-# ruff: noqa: INP001 - pytest discovers this standalone module without a package.
 """Deterministic HTTP-boundary tests, without vendor calls or timing luck."""
 
 from io import BytesIO

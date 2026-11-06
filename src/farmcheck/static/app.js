@@ -278,7 +278,13 @@
     const c = h("section", { class: "card" }, h("h3", { text: "후보 묶음과 구성원" }));
     if (!g) return (c.append(h("p", { class: "muted-text", text: "이 기록은 단독 후보이거나 묶음에 속하지 않습니다." })), c);
     c.append(h("p", { text: "묶음 " + g.id + " · 구성원 " + val(g.size) + "건" }),
-      h("dl", { class: "kv" }, ...Object.entries(g.key || {}).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { class: "mono", text: val(v) })])),
+      h("dl", { class: "kv" }, ...Object.entries(g.key || {}).flatMap(([k, v]) =>
+        k === "units"
+          ? Object.entries(v).flatMap(([field, unit]) => [
+              h("dt", { text: field + " 단위" }),
+              h("dd", { text: val(unit.raw_unit) + " · " + (L.unit[unit.status] || val(unit.status)) + " · " + val(unit.source_ref) }),
+            ])
+          : [h("dt", { text: k }), h("dd", { class: "mono", text: val(v) })])),
       g.note ? h("p", { class: "muted-text", text: g.note }) : null,
       h("p", { class: "muted-text", text: "묶음은 보기용입니다. 구성원은 병합·삭제되지 않으며 한 건의 처리·해소는 다른 구성원에 전파되지 않습니다." }));
     const list = h("div", { class: "stack" });
