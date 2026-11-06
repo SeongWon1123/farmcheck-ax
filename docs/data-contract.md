@@ -164,3 +164,18 @@ The inventory CLI separately exited 0 against the supplied original ZIP.
 The editor language-server tool could not find `basedpyright-langserver` on its
 own PATH. The project-local `uv run basedpyright` command above did run cleanly;
 no dependency or manifest changes were made to work around the editor tool.
+
+## Review corrections
+
+Malformed JSON, missing paired images and unreadable image headers are retained
+as `Catalog.problems`: immutable `SourceProblem` entries with member path,
+exact byte hash, problem kind and message. Other records continue loading.
+`Inventory.source_problems` counts these separately from valid photo records;
+bootstrap and the UI expose them rather than silently dropping them.
+The supplied archive has zero source problems.
+
+Group detail includes each field's unit status, raw unit and source reference.
+Peer unit status remains unknown when any compared unit is unknown.
+Resolution evidence must cover the currently matched checks; model disagreement
+also requires a model-run reference. Model references retain `kind="model"` and
+their actual/injected origin instead of being labelled original JSON.
