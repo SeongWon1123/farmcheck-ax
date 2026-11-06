@@ -36,7 +36,8 @@ def create_app(
     store = Store(database or Path(os.environ.get("FARM_DB_PATH", f"var/{selected_mode}.sqlite")))
     service = Service(selected_catalog, store, selected_mode)
     application = FastAPI(title="FarmCheck", docs_url=None, redoc_url=None, openapi_url=None)
-    router = APIRouter(prefix=base)
+    route_prefix = os.environ.get("APP_ROUTE_PREFIX", base).rstrip("/")
+    router = APIRouter(prefix=route_prefix)
     static = Path(__file__).parent / "static"
 
     @application.exception_handler(DomainError)
@@ -91,7 +92,8 @@ def create_app(
         identifier = store.workspace(request.cookies.get("farmcheck_workspace"))
         response.set_cookie(
             "farmcheck_workspace", identifier, httponly=True, samesite="lax",
-            secure=request.url.scheme == "https", path=base or "/",
+            secure=os.environ.get("FARM_COOKIE_SECURE") == "1" or request.url.scheme == "https",
+            path=base or "/",
         )
         snapshot = store.read(identifier)
         return View({
@@ -99,6 +101,7 @@ def create_app(
             "mode": selected_mode, "summary": service.summary(snapshot).root,
             "rule_registry": [json_object(rule) for rule in RULE_REGISTRY],
             "agent_status": json_object(AgentStatus()),
+            "source_problems": [json_object(problem) for problem in selected_catalog.problems],
         })
 
     register_read_routes(router, service, workspace)
@@ -106,7 +109,7 @@ def create_app(
     register_model_routes(router, service, workspace)
     register_snapshot_routes(router, service, workspace)
     application.include_router(router)
-    application.mount(base + "/static", StaticFiles(directory=static), name="static")
+    application.mount(route_prefix + "/static", StaticFiles(directory=static), name="static")
     return application
 
 

@@ -25,7 +25,17 @@ def register_workflow_routes(
         def transform(state: RecordState) -> RecordState:
             assessment = service.assessment(source, state)
             refs = frozenset(ref for check in assessment.checks for ref in check.evidence_refs)
-            return review(state, payload, "workspace_user", refs)
+            required = tuple(
+                frozenset(check.evidence_refs) for check in assessment.checks
+                if check.outcome == "matched"
+            )
+            model_refs = frozenset(
+                ref for check in assessment.checks if check.outcome == "matched"
+                for ref in check.evidence_refs if ref.startswith("model:")
+            )
+            if model_refs:
+                required = (*required, model_refs)
+            return review(state, payload, "workspace_user", refs, required)
 
         _ = service.store.mutate(ws, record_id, payload.expected_revision, transform)
         return service.detail(record_id, service.store.read(ws))

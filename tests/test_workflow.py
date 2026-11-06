@@ -28,6 +28,7 @@ def test_hold_review_correction_are_distinct() -> None:
     )
     assert checked.resolution_state == "held"
     assert checked.review_state == "reviewed"
+    assert checked.hold_reason == "원문 확인"
     changed = correct(
         checked,
         CorrectionInput(expected_revision=2, field="environment.ph", value="7", reason="입력 확인"),

@@ -91,3 +91,57 @@ def test_invalid_refs_mode_and_group_member_independence(tmp_path: Path) -> None
         assert client.get("/demo/api/records/no-such-record").status_code == 404
         bootstrap = View.model_validate_json(client.get("/demo/api/bootstrap").text)
         assert bootstrap.root["mode"] == "synthetic"
+
+
+def test_active_candidate_requires_related_evidence_and_hold_reason_survives(
+    tmp_path: Path,
+) -> None:
+    """Recognized but unrelated fields cannot resolve an active pH candidate."""
+    catalog = load_catalog("synthetic")
+    record = next(r for r in catalog.records.values() if r.scenario == "shared_candidate_a")
+    application = create_app(catalog, tmp_path / "evidence.sqlite", "synthetic", "")
+    with TestClient(application) as client:
+        _ = client.get("/api/bootstrap")
+        route = f"/api/records/{record.id}"
+        assert client.post(route + "/recheck", json={"expected_revision": 0}).status_code == 200
+        assert client.post(route + "/review", json={
+            "expected_revision": 1, "action": "resolve", "evidence_note": "원문 확인",
+            "evidence_refs": [f"{record.id}:{record.raw_hash}:images.class_name"],
+        }).status_code == 422
+        assert client.post(route + "/review", json={
+            "expected_revision": 1, "action": "hold",
+            "note": "측정 로그 확인 필요", "next_action": "담당자 확인",
+        }).status_code == 200
+        reviewed = client.post(route + "/review", json={
+            "expected_revision": 2, "action": "reviewed", "note": "별도 검토 메모",
+        })
+        assert reviewed.status_code == 200
+        current = View.model_validate_json(reviewed.text).root["review"]
+        assert isinstance(current, dict)
+        hold = current["hold"]
+        assert isinstance(hold, dict)
+        assert hold["reason"] == "측정 로그 확인 필요"
+        resolved = client.post(route + "/review", json={
+            "expected_revision": 3, "action": "resolve",
+            "evidence_note": "pH 원문과 담당자 기록을 검토함",
+            "evidence_refs": [f"{record.id}:{record.raw_hash}:environment.ph"],
+        })
+        assert resolved.status_code == 200
+        assert View.model_validate_json(resolved.text).root["candidate"] is True
+
+
+def test_model_reference_retains_machine_readable_origin(tmp_path: Path) -> None:
+    """The evidence picker cannot relabel an injected model run as source JSON."""
+    catalog = load_catalog("synthetic")
+    record = next(r for r in catalog.records.values() if r.scenario == "injected_week_difference")
+    application = create_app(catalog, tmp_path / "provenance.sqlite", "synthetic", "")
+    with TestClient(application) as client:
+        _ = client.get("/api/bootstrap")
+        response = client.get(f"/api/records/{record.id}")
+        evidence = View.model_validate_json(response.text).root["evidence_candidates"]
+        assert isinstance(evidence, list)
+        models = [
+            item for item in evidence if isinstance(item, dict) and item.get("kind") == "model"
+        ]
+        assert len(models) == 1
+        assert models[0]["origin"] == "injected"

@@ -143,9 +143,14 @@ def assess(
     checks = tuple(
         RuleResult(
             rule_id=rule.rule_id, version=rule.version, outcome=outcome,
-            field_paths=rule.fields,
+            field_paths=(
+                invalid if rule.rule_id == "REQUIRED_NUMERIC" and invalid else rule.fields
+            ),
             evidence_refs=tuple(
-                f"{record.id}:{record.raw_hash}:{field}" for field in rule.fields
+                f"{record.id}:{record.raw_hash}:{field}"
+                for field in (
+                    invalid if rule.rule_id == "REQUIRED_NUMERIC" and invalid else rule.fields
+                )
             ) + ((f"model:{model.run_id}",) if model and rule.rule_id == "MODEL_RECORD_DIFFERENCE"
                  and model.status == "available" else ()),
             reason=reason, next_question=rule.next_question,

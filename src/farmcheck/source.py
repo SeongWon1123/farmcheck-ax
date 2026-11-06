@@ -15,10 +15,11 @@ from pathlib import Path
 from typing import Final, override
 from zipfile import ZipFile
 
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 from farmcheck.contracts import (
     Dimensions,
+    FrozenModel,
     Inventory,
     ModelComparison,
     RawValue,
@@ -54,6 +55,15 @@ class CatalogConfigurationError(ValueError):
             f"Unsupported catalog configuration: mode={self.mode}, "
             f"zip_supplied={self.zip_supplied}; use synthetic or green_tea with a ZIP path."
         )
+
+
+class SourceProblem(FrozenModel):
+    """Retain an unreadable source reference without inventing a valid record."""
+
+    member_path: str
+    raw_hash: str
+    kind: str
+    message: str
 
 
 def text_at(raw: RawValue, path: str) -> str:
@@ -110,6 +120,7 @@ class Catalog:
     records: dict[str, SourceRecord]
     inventory: Inventory
     zip_path: Path | None = None
+    problems: tuple[SourceProblem, ...] = ()
 
     def image_bytes(self, record_id: str) -> tuple[bytes, str]:
         """Read only the image already paired to an authorized catalog record."""
@@ -208,6 +219,37 @@ def synthetic_model(record: SourceRecord) -> ModelComparison | None:
             return None
 
 
+def read_pair(
+    archive: ZipFile, name: str, image_names: dict[str, str],
+) -> SourceRecord | SourceProblem:
+    """Keep malformed or unpaired inputs visible as immutable source problems."""
+    data = archive.read(name)
+    digest = hashlib.sha256(data).hexdigest()
+    try:
+        text = data.decode("utf-8")
+        raw = decode_raw(text)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return SourceProblem(
+            member_path=name, raw_hash=digest, kind="invalid_json",
+            message="원문 JSON을 해석할 수 없습니다. 원본은 ZIP에 보존되어 있습니다.",
+        )
+    image_name = image_names.get(text_at(raw, "images.imagepath"))
+    if image_name is None:
+        return SourceProblem(
+            member_path=name, raw_hash=digest, kind="missing_image",
+            message="원문이 참조하는 사진을 찾을 수 없습니다.",
+        )
+    try:
+        with Image.open(io.BytesIO(archive.read(image_name))) as image:
+            dimensions = Dimensions(width=image.width, height=image.height)
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
+        return SourceProblem(
+            member_path=name, raw_hash=digest, kind="invalid_image",
+            message="연결된 사진의 크기를 읽을 수 없습니다.",
+        )
+    return make_record(text, name, dimensions).model_copy(update={"image_member_path": image_name})
+
+
 def load_catalog(mode: str, zip_path: Path | None = None) -> Catalog:
     """Load private green tea only on explicit server mode; default is synthetic."""
     if mode == "synthetic":
@@ -216,6 +258,7 @@ def load_catalog(mode: str, zip_path: Path | None = None) -> Catalog:
     if mode != "green_tea" or zip_path is None:
         raise CatalogConfigurationError(mode=mode, zip_supplied=zip_path is not None)
     records: dict[str, SourceRecord] = {}
+    problems: list[SourceProblem] = []
     with ZipFile(zip_path) as archive:
         members = archive.namelist()
         image_names = {name.rsplit("/", 1)[-1]: name for name in members
@@ -224,18 +267,15 @@ def load_catalog(mode: str, zip_path: Path | None = None) -> Catalog:
         for name in json_names:
             if "/05.녹차/" not in name:
                 continue
-            data = archive.read(name)
-            text = data.decode("utf-8")
-            raw = decode_raw(text)
-            image_name = image_names[text_at(raw, "images.imagepath")]
-            with Image.open(io.BytesIO(archive.read(image_name))) as image:
-                dimensions = Dimensions(width=image.width, height=image.height)
-            record = make_record(text, name, dimensions).model_copy(
-                update={"image_member_path": image_name}
-            )
-            records[record.id] = record
-    return Catalog(records, inventory(records, (len(json_names), len(image_names)), zip_path),
-                   zip_path)
+            match read_pair(archive, name, image_names):
+                case SourceRecord() as record:
+                    records[record.id] = record
+                case SourceProblem() as problem:
+                    problems.append(problem)
+    counts = inventory(records, (len(json_names), len(image_names)), zip_path).model_copy(
+        update={"source_problems": len(problems)},
+    )
+    return Catalog(records, counts, zip_path, tuple(problems))
 
 
 class InventoryArguments(argparse.Namespace):

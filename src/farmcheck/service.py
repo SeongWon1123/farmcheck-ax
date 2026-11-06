@@ -115,10 +115,18 @@ class Service:
         states = {state.record_id: state for state in snapshot.records}
         first = self.source(member_ids[0])
         key: dict[str, JsonValue] = {
-            path: str(first.values[path].decimal) for path in GROUP_FIELDS
+            path: None if first.values[path].decimal is None else str(first.values[path].decimal)
+            for path in GROUP_FIELDS
         }
         key["env_date"] = first.env_time.raw
         key["origin"] = first.origin
+        key["units"] = {
+            path: {
+                "status": first.values[path].unit_status,
+                "raw_unit": first.values[path].raw_unit,
+                "source_ref": first.values[path].unit_source_ref,
+            } for path in GROUP_FIELDS
+        }
         members: list[JsonValue] = [
             self.row(
                 self.source(identifier), states.get(identifier, RecordState(record_id=identifier)),
@@ -164,7 +172,11 @@ class Service:
                 "assumed_unit": definition.assumed_unit,
             })
             reference_labels.update({
-                ref: ref.rsplit(":", 1)[-1] + " · 원본 출처"
+                ref: (
+                    "모델 실행 · " + ref + " (주입 시연)" if ref.startswith("model:injected:")
+                    else "모델 실행 · " + ref if ref.startswith("model:")
+                    else ref.rsplit(":", 1)[-1] + " · 원본 출처"
+                )
                 for ref in check.evidence_refs
             })
         delta = time_difference(record)
@@ -207,13 +219,22 @@ class Service:
             )
             if week is not None and other_week == week and other_units == units:
                 peer_values: dict[str, JsonValue] = {
-                    path: str(other_assessment.effective_values[path].decimal)
+                    path: (
+                        None if other_assessment.effective_values[path].decimal is None
+                        else str(other_assessment.effective_values[path].decimal)
+                    )
                     for path in GROUP_FIELDS
                 }
                 peers.append({
                     "id": other.id, "growth_week": str(other_week),
                     "timestamp": other.photo_time.raw, "values": peer_values,
-                    "unit_status": "출처 선언 기준·독립 검증 아님", "origin": other.origin,
+                    "unit_status": (
+                        "unknown" if any(
+                            other_assessment.effective_values[path].unit_status == "unknown"
+                            for path in GROUP_FIELDS
+                        ) else "source_declared"
+                    ),
+                    "origin": other.origin,
                     "source_group_id": other.source_group_id,
                 })
                 if len(peers) >= MAX_PEERS:
@@ -259,7 +280,7 @@ class Service:
             "peers_note": "동일 주차·단위의 비교 기록입니다. 정상 범위나 성장 추세가 아닙니다.",
             "review": {
                 "review_state": state.review_state, "resolution_state": state.resolution_state,
-                "hold": {"reason": state.note, "next_action": state.next_action},
+                "hold": {"reason": state.hold_reason, "next_action": state.next_action},
                 "resolution": {
                     "evidence_note": state.evidence_note,
                     "evidence_refs": list(state.evidence_refs),
@@ -273,7 +294,14 @@ class Service:
                 for field in sorted(CORRECTION_FIELDS)
             ],
             "evidence_candidates": [
-                {"ref": ref, "label": label} for ref, label in reference_labels.items()
+                {
+                    "ref": ref, "label": label,
+                    "kind": "model" if ref.startswith("model:") else "source",
+                    "origin": (
+                        "injected" if ref.startswith("model:injected:")
+                        else "actual" if ref.startswith("model:") else record.origin
+                    ),
+                } for ref, label in reference_labels.items()
             ],
             "history": history,
         })

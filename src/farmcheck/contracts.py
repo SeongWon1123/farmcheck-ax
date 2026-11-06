@@ -179,6 +179,7 @@ class Inventory(FrozenModel):
     """Aggregated counts, explicitly not counts of plants or sensor failures."""
 
     dataset_id: str
+    source_problems: int = 0
     zip_sha256: str | None
     zip_bytes: int | None
     total_json: int

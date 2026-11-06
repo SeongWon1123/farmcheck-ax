@@ -63,7 +63,7 @@
 `GET /api/records/{id}/image`: 이미지 바이트(380x380). 불가 시 404 → 프런트가 대체 문구 표시.
 
 ## 요청 본문(계획 고정 형태)
-- review: `{"expected_revision":4,"action":"reviewed|hold|resolve","note":str|null,"next_action":str|null,"evidence_note":str|null,"evidence_refs":[str]}`
+- review: `{"expected_revision":4,"action":"reviewed|hold|resolve","note":str,"next_action":str,"evidence_note":str,"evidence_refs":[str]}`
   (hold: `note`=사유 + `next_action` 필수; resolve: `evidence_note` 필수, `evidence_refs`는 `evidence_candidates[].ref` 중 선택)
 - corrections: `{"expected_revision":4,"field":"environment.ph","value":"7.1","reason":"..."}`
 - recheck / classify: `{"expected_revision":4}`

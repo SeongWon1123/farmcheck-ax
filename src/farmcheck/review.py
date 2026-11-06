@@ -76,6 +76,7 @@ def review(
     request: ReviewInput,
     actor: str,
     allowed_refs: frozenset[str],
+    required_ref_groups: tuple[frozenset[str], ...] = (),
 ) -> RecordState:
     """Record human judgment without treating review as resolution."""
     if not set(request.evidence_refs).issubset(allowed_refs):
@@ -92,7 +93,7 @@ def review(
                 raise DomainError(code, "보류 이유와 다음 확인 항목이 필요합니다.")
             updated = state.model_copy(update={
                 "resolution_state": "held",
-                "note": request.note,
+                "hold_reason": request.note,
                 "next_action": request.next_action,
             })
         case "resolve":
@@ -102,6 +103,9 @@ def review(
             if not request.evidence_note.strip() or not request.evidence_refs:
                 code = "evidence_required"
                 raise DomainError(code, "해소 근거와 출처를 명시하세요.")
+            if any(not group.intersection(request.evidence_refs) for group in required_ref_groups):
+                code = "candidate_evidence_required"
+                raise DomainError(code, "현재 확인 후보마다 관련 근거를 선택하세요.")
             updated = state.model_copy(update={
                 "resolution_state": "resolved",
                 "review_state": "reviewed",

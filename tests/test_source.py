@@ -91,3 +91,25 @@ def test_catalog_rejects_configuration_when_server_mode_is_incomplete(mode: str)
         _ = load_catalog(mode)
     assert caught.value.mode == mode
     assert caught.value.zip_supplied is False
+
+
+@pytest.mark.parametrize(
+    ("text", "kind"),
+    [("{broken", "invalid_json"), ('{"images":{"imagepath":"missing.jpg"}}', "missing_image")],
+)
+def test_broken_source_is_retained_without_aborting_catalog(
+    tmp_path: Path, text: str, kind: str,
+) -> None:
+    """Unreadable source evidence remains addressable by path and exact hash."""
+    path = tmp_path / "broken.zip"
+    member = "Sample/02.라벨링데이터/05.녹차/problem.json"
+    with ZipFile(path, "w") as archive:
+        archive.writestr(member, text)
+    before = path.read_bytes()
+    catalog = load_catalog("green_tea", path)
+    assert catalog.inventory.source_problems == 1
+    assert catalog.inventory.records == 0
+    assert catalog.problems[0].kind == kind
+    assert catalog.problems[0].member_path == member
+    assert catalog.problems[0].raw_hash == hashlib.sha256(text.encode()).hexdigest()
+    assert path.read_bytes() == before

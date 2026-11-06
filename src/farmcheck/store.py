@@ -56,6 +56,7 @@ class RecordState(FrozenModel):
     model_attempt: dict[str, JsonValue] | None = None
     pending_model_request: str | None = None
     note: str = ""
+    hold_reason: str = ""
     next_action: str = ""
     evidence_note: str = ""
     evidence_refs: tuple[str, ...] = ()

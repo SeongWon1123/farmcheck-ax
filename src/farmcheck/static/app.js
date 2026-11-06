@@ -113,6 +113,9 @@
     box.append(stat(s.candidates, "현재 확인 후보 기록"), stat(s.current_candidate_groups, "현재 후보 묶음"),
       stat(s.needs_review, "재검토 필요"), stat(s.held, "보류"));
     if (s.baseline_records != null) box.append(h("p", { class: "stat-note", text: "최초 기준: 사진·기록 " + val(s.baseline_records) + "건 / 묶음 " + val(s.baseline_groups) + "개 (후보 건수이며 식물 문제·센서 고장 횟수가 아닙니다)" }));
+    if (S.boot.source_problems?.length) box.append(h("details", { class: "stat-note" },
+      h("summary", { text: "원본 연결·해석 문제 " + S.boot.source_problems.length + "개 (검토 목록과 별도 보존)" }),
+      ...S.boot.source_problems.map((p) => h("p", { text: p.member_path + " · " + p.kind + " · " + p.message + " · SHA256 " + p.raw_hash }))));
   }
 
   /* ---------- list ---------- */
