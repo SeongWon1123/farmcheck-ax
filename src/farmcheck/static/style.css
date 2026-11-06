@@ -26,6 +26,13 @@
   --shadow: 0 1px 2px rgba(29, 43, 36, .06), 0 4px 16px rgba(29, 43, 36, .05);
 }
 * { box-sizing: border-box; }
+.handover-scope { border: 0; padding: 0; margin: 24px 0; min-width: 0; display: grid; gap: 8px; }
+.handover-scope legend { font-weight: 700; margin-bottom: 8px; }
+.scope-option { display: flex; align-items: flex-start; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: var(--r-1); cursor: pointer; }
+.scope-option:has(input:checked) { background: var(--tea-wash); border-color: var(--tea); }
+.scope-option input { flex: 0 0 auto; margin: 5px 0 0; width: 20px; height: 20px; }
+.scope-option span span { display: block; margin-top: 4px; }
+#handoverStatus:not(:empty) { margin-top: 16px; }
 html { font-size: 16px; }
 body { margin: 0; background: var(--paper); color: var(--ink); font: var(--fs-1)/1.6 var(--font); word-break: keep-all; overflow-wrap: anywhere; }
 h1, h2, h3, h4, p { margin: 0; }
@@ -38,6 +45,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .skip:focus { left: var(--sp-2); top: var(--sp-2); }
 code, .mono { font-family: var(--mono); font-size: var(--fs-0); }
 [hidden] { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 
 /* header */
 .top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); padding: var(--sp-3) var(--sp-5); background: var(--tea-strong); color: #f3f1e4; }
@@ -210,7 +218,7 @@ pre.json { margin: 0; padding: var(--sp-3); background: #fff; border: 1px solid 
   .two { grid-template-columns: minmax(0, 1fr); }
   body[data-pane="list"] .detail-pane { display: none; }
   body[data-pane="detail"] .list-pane { display: none; }
-  .back { display: inline-flex; align-items: center; }
+  .back { display: inline-flex; align-items: center; position: sticky; top: 0; z-index: 5; background: var(--paper); box-shadow: 0 2px 6px rgba(29,43,36,.08); }
 }
 @media (max-width: 600px) {
   .view { padding: var(--sp-3); }
@@ -235,3 +243,41 @@ pre.json { margin: 0; padding: var(--sp-3); background: #fff; border: 1px solid 
   .group-members { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
+
+/* record-owned workflow */
+.card[id], .feedback { scroll-margin-top: 64px; }
+.workflow > .help { margin-bottom: 16px; }
+.action-tabs { display: flex; gap: 4px; max-width: 720px; margin: 16px 0 24px; border-bottom: 1px solid var(--line); }
+.action-tabs > button { flex: 1; min-width: 0; min-height: 44px; padding: 10px 4px; border: 0; border-radius: 6px 6px 0 0; background: transparent; color: var(--ink-2); font: 600 14px/1.4 var(--font); white-space: nowrap; cursor: pointer; }
+.action-tabs > button[aria-selected="true"] { color: var(--tea-strong); background: var(--tea-wash); }
+.action-tabs > button:disabled { cursor: wait; opacity: .65; }
+.action-form { max-width: 720px; }
+.workflow-fields { display: grid; gap: 16px; min-width: 0; border: 0; padding: 0; margin: 0; }
+.workflow-fields > legend { font-weight: 700; font-size: 18px; padding: 0; margin-bottom: 12px; }
+.workflow-fields > .help { margin-top: 0; }
+.workflow-fields > .btn { justify-self: start; }
+.workflow-fields > .btn.primary { min-width: 180px; }
+.workflow-fields textarea { min-height: 112px; }
+.field-help { display: block; font-size: 13px; color: var(--ink-2); font-weight: 400; }
+.field-error { display: block; color: var(--red); font-size: 14px; font-weight: 600; margin-top: 6px; }
+[aria-invalid="true"] { border-color: var(--red) !important; outline: 1px solid var(--red); }
+.feedback { max-width: 720px; padding: 16px; margin: 16px 0; border: 1px solid var(--tea); border-radius: 8px; background: var(--tea-wash); color: var(--tea-strong); }
+.feedback.error { border-color: var(--red); color: var(--red); background: var(--red-wash); }
+.feedback .btn { margin-top: 12px; }
+.write-progress { max-width: 720px; margin: 12px 0; padding: 12px; background: var(--blue-wash); color: var(--blue); border-radius: 6px; font-size: 14px; }
+.draft-status { margin: 20px 0 8px; font-size: 13px; }
+.evidence-options { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 0; }
+.evidence-options legend { font-weight: 600; padding: 0 4px; }
+.evidence-options .check { min-height: 44px; align-items: center; padding: 8px 0; }
+.evidence-identifiers { margin-top: 8px; }
+.evidence-identifiers p { margin-top: 12px; }
+.full-reference { display: block; overflow-wrap: anywhere; font-size: 12px; }
+.inline-warning { border-radius: 8px; padding: 12px; background: var(--amber-wash); color: var(--amber); }
+.inline-warning .btn { margin-top: 12px; }
+.optional-model { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 8px; }
+.optional-model .btn { margin-top: 12px; }
+@media (max-width: 600px) {
+  .workflow-fields > .btn { justify-self: stretch; }
+  .workflow-fields > legend { font-size: 17px; }
+  .feedback { padding: 12px; }
+}

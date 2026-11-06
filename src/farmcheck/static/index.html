@@ -26,6 +26,7 @@
   </nav>
 </header>
 <div id="notice" class="notice" role="alert" hidden></div>
+<div id="statusLine" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 <main id="main" tabindex="-1">
   <section id="viewRecords" class="view records-view" aria-label="기록 검토">
     <aside class="list-pane" aria-label="기록 목록">
@@ -51,7 +52,7 @@
       <div id="listBody" class="list-body" aria-busy="true"></div>
       <div id="pager" class="pager"></div>
     </aside>
-    <article class="detail-pane" id="detail" aria-live="polite" aria-label="기록 상세"></article>
+    <article class="detail-pane" id="detail" aria-label="기록 상세"></article>
   </section>
   <section id="viewHandover" class="view" hidden aria-label="인수인계"></section>
   <section id="viewRules" class="view" hidden aria-label="규칙과 AgentStream"></section>
