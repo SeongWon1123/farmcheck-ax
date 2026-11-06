@@ -100,3 +100,17 @@ checks passed, and targeted basedpyright reported zero errors and zero warnings
 for the client, tests, and smoke runner. The language-server executable was not
 on PATH; the installed project type checker was invoked directly through `uv`.
 The three Python files are below 200 nonblank, noncomment lines each.
+
+## Additional local application integration
+
+After the five-image smoke, the lead sent one additional actual green-tea record
+through the local application's `/classify` route. It returned HTTP 200, green
+tea/week4, workflow revision2 and data revision1, with `needs_review` and `open`.
+It did not mark human review complete. The response receipt endpoint returned
+one immutable run. A human hold, explicit recheck and selected-record handover
+then each returned200, with the unresolved held record retained.
+
+This is one application integration check, not a sixth sample added to an
+accuracy claim. Its original-response evidence remains private in the local
+V05 evidence directory. No actual source image or raw source record was added
+to the public app or repository.

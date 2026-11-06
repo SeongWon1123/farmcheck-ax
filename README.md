@@ -9,6 +9,8 @@
 공개 시연:
 https://devopen.jntp-ax.or.kr/i/SpPClk4QcdJwast1/
 
+코드 저장소: https://github.com/SeongWon1123/farmcheck-ax
+
 ## 실행
 
 Python 3.12와 uv가 필요합니다.
@@ -38,7 +40,7 @@ uv run uvicorn farmcheck.app:app --host 127.0.0.1 --port 8503
 ```sh
 uv run pytest -q
 uv run basedpyright
-uv run ruff check .
+uv run ruff check --no-cache .
 ```
 
 2026-11-06 UTC 기준 전체 테스트 66개, 타입 검사와 린트가 통과했습니다.
@@ -50,6 +52,7 @@ uv run ruff check .
 사용 순서는 `docs/user-guide.md`, 근거와 경계는 `docs/data-contract.md`,
 모델 연결 증거는 `docs/model-smoke.md`, 향후 사람 대상 실험은
 `docs/evaluation-protocol.md`, 개발 과정은 `docs/development-journal.md`에 있습니다.
+독립 리뷰10개와 실행 검증10개 요약은 `docs/verification.md`에 있습니다.
 발표자료는 `presentation/deck.pptx`, `presentation/deck.pdf`입니다.
 
 ## 배포
