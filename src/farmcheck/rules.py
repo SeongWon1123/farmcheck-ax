@@ -58,9 +58,9 @@ def canonical_decimal(value: Decimal) -> str:
         case "n" | "N" | "F":
             return f"nonfinite:{value}"
     text = "".join(str(digit) for digit in digits)
-    while text.endswith("0"):
-        text = text[:-1]
-        numeric_exponent += 1
+    trimmed = text.rstrip("0")
+    numeric_exponent += len(text) - len(trimmed)
+    text = trimmed
     return f"{sign}:{text}:{numeric_exponent}"
 
 

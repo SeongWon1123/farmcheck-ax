@@ -10,6 +10,8 @@ import httpx2
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from farmcheck.model_connection import model_base_url, model_identity
+
 MODEL_BASE_URL: Final = "https://aiopen-serving.jntp-ax.or.kr/jntp-cpu/SV-c562094f"
 MAX_IMAGE_BYTES: Final = 10 * 1024 * 1024
 MAX_PIXELS: Final = 16_000_000
@@ -83,6 +85,7 @@ class CropClient:
     def __init__(self, *, transport: httpx2.BaseTransport | None = None) -> None:
         """Allow deterministic transport injection, never an alternate URL."""
         self._transport = transport
+        self.identity: dict[str, str] = model_identity()
 
     def predict(self, image: bytes, filename: str) -> Prediction:
         """Send only validated image bytes under an opaque generated filename."""
@@ -138,7 +141,7 @@ class CropClient:
                 ) as client,
                 client.stream(
                     "POST",
-                    f"{MODEL_BASE_URL}/predict",
+                    f"{model_base_url(self.identity)}/predict",
                     files={"file": (f"{run_id}.{extension}", image, content_type)},
                 ) as response,
             ):

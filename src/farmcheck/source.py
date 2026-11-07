@@ -205,6 +205,8 @@ def synthetic_records() -> dict[str, SourceRecord]:
 
 def synthetic_model(record: SourceRecord) -> ModelComparison | None:
     """Return explicitly injected fixtures, never claim these are live inference."""
+    if record.origin not in {"synthetic", "injected"}:
+        return None
     match record.scenario:
         case "injected_week_difference":
             return ModelComparison(

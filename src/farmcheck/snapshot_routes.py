@@ -30,6 +30,14 @@ def register_snapshot_routes(
         snapshot = service.handover(ws, payload)
         return service.handover_view(snapshot, store.read(ws).workspace_revision)
 
+    @router.get("/api/handovers")
+    def listing(ws: Annotated[str, Depends(workspace)]) -> View:
+        return View({"items": [
+            {"snapshot_id": item.id, "created_at": item.created_at,
+             "sha256": item.sha256, "workspace_revision": item.workspace_revision}
+            for item in store.snapshots(ws)
+        ]})
+
     @router.get("/api/handovers/{snapshot_id}")
     def handover(snapshot_id: str, ws: Annotated[str, Depends(workspace)]) -> View:
         return service.handover_view(

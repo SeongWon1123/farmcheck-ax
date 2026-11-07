@@ -10,7 +10,7 @@ from typing import ClassVar, Final, Literal
 from pydantic import BaseModel, ConfigDict, computed_field
 
 type RawValue = str | int | Decimal | bool | list[RawValue] | dict[str, RawValue] | None
-type Origin = Literal["actual", "injected", "recorded", "synthetic"]
+type Origin = Literal["actual", "injected", "recorded", "synthetic", "uploaded"]
 type ParseStatus = Literal["missing", "blank", "dash", "invalid", "zero", "number"]
 type Presence = Literal["absent", "null", "present"]
 type UnitStatus = Literal["unknown", "source_declared"]
@@ -132,6 +132,16 @@ class ModelComparison(FrozenModel):
     crop: str | None = None
     growth_week: int | None = None
     confidence: Decimal | None = None
+    crop_confidence: Decimal | None = None
+    growth_confidence: Decimal | None = None
+    model_identity: dict[str, str] | None = None
+    image_sha256: str | None = None
+    json_sha256: str | None = None
+    execution_type: Literal["real_inference"] | None = None
+    elapsed_ms: float | None = None
+    request_id: str | None = None
+    based_on_revision: int | None = None
+    based_on_data_revision: int | None = None
 
 
 class RuleDefinition(FrozenModel):

@@ -20,7 +20,7 @@ def register_workflow_routes(
     def review_record(
         record_id: str, payload: ReviewInput, ws: Annotated[str, Depends(workspace)],
     ) -> View:
-        source = service.source(record_id)
+        source = service.source(record_id, ws)
 
         def transform(state: RecordState) -> RecordState:
             assessment = service.assessment(source, state)
@@ -44,7 +44,7 @@ def register_workflow_routes(
     def correction(
         record_id: str, payload: CorrectionInput, ws: Annotated[str, Depends(workspace)],
     ) -> View:
-        _ = service.source(record_id)
+        _ = service.source(record_id, ws)
         _ = service.store.mutate(
             ws, record_id, payload.expected_revision,
             lambda state: correct(state, payload, "workspace_user"),
@@ -55,7 +55,7 @@ def register_workflow_routes(
     def recheck(
         record_id: str, payload: RevisionInput, ws: Annotated[str, Depends(workspace)],
     ) -> View:
-        source = service.source(record_id)
+        source = service.source(record_id, ws)
 
         def transform(state: RecordState) -> RecordState:
             assessment = service.assessment(source, state)
