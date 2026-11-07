@@ -4,59 +4,119 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="farmcheck-base-path" content="__BASE_PATH__">
-<meta name="description" content="녹차 기록의 원문과 근거를 확인하고 검토·보류·보정 결과를 다음 담당자에게 전달합니다.">
-<title>팜체크 · 녹차 기록 검토와 인수인계</title>
-<link rel="stylesheet" href="static/style.css">
+<meta name="farmcheck-ui-version" content="review-flow-20261107-v5c">
+<meta name="description" content="녹차 기록의 원문과 AI 예측을 비교하고 판단·보류 결과를 보고서로 남깁니다.">
+<title>팜체크 · 농업 AI 데이터 검수</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%231f8a5b'/%3E%3Cstop offset='.5' stop-color='%236fd6a2'/%3E%3Cstop offset='1' stop-color='%231f8a5b'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='16' cy='16' r='14' fill='url(%23g)'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="static/style.css?v=review-flow-20261107-v5c">
 </head>
 <body data-pane="list">
 <a class="skip" href="#main">본문으로 건너뛰기</a>
+<div class="backdrop" aria-hidden="true"><span class="glow"></span><span class="grid"></span></div>
 <header class="top">
   <div class="brand">
     <span class="brand-mark" aria-hidden="true"></span>
-    <div>
-      <h1>팜체크</h1>
-      <p class="brand-sub">녹차 기록 검토</p>
-    </div>
+    <h1>팜체크</h1>
+    <span class="brand-sub">농업 AI 데이터 검수</span>
   </div>
-  <div class="top-badges" id="topBadges" aria-live="polite"></div>
   <nav class="tabs" aria-label="주요 화면">
-    <button type="button" class="tab" data-view="records" aria-current="page">기록 검토</button>
-    <button type="button" class="tab" data-view="handover">인수인계</button>
-    <button type="button" class="tab" data-view="rules">검사 기준·도움말</button>
+    <button type="button" class="tab" data-view="records" aria-current="page">검수</button>
+    <button type="button" class="tab" data-view="handover">보고서</button>
+    <button type="button" class="tab" data-view="rules">사용 안내</button>
   </nav>
+  <div class="top-right">
+    <span id="topBadges" aria-live="polite"></span>
+    <button id="importOpen" type="button" class="btn black" aria-haspopup="dialog">자료 가져오기</button>
+  </div>
 </header>
 <div id="notice" class="notice" role="alert" hidden></div>
 <div id="statusLine" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 <main id="main" tabindex="-1">
   <section id="viewRecords" class="view records-view" aria-label="기록 검토">
-    <aside class="list-pane" aria-label="기록 목록">
-      <div class="list-heading"><h2>확인할 기록</h2><p>원문을 살펴보고 판단을 남겨주세요.</p></div>
-      <div id="summary" class="summary"></div>
-      <form id="filterForm" class="filters" role="search">
-        <label class="field">
-          <span>목록 범위</span>
-          <select id="filterSelect">
-            <option value="candidates">확인 후보</option>
-            <option value="all">전체 기록</option>
-            <option value="needs_review">재검토 필요</option>
-            <option value="held">보류</option>
-            <option value="resolved">해소 처리</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>기록 찾기</span>
-          <input id="searchInput" type="search" placeholder="파일명 또는 경로" autocomplete="off">
-        </label>
-        <button type="submit" class="btn">조회</button>
-      </form>
-      <div id="listBody" class="list-body" aria-busy="true"></div>
-      <div id="pager" class="pager"></div>
-    </aside>
-    <article class="detail-pane" id="detail" aria-label="기록 상세"></article>
+    <nav class="side" aria-label="자료 범위와 보기">
+      <p class="lab">01 · Data</p>
+      <div class="side-group scope-group" role="group" aria-label="자료 범위">
+        <button type="button" class="navi" data-scope="actual" aria-pressed="true"><span>내 실제 자료</span><span class="n" data-count="actual">-</span></button>
+        <button type="button" class="navi" data-scope="demo" aria-pressed="false"><span>시연 예제</span><span class="n" data-count="demo">-</span></button>
+      </div>
+      <p class="lab">02 · Views</p>
+      <div class="side-group view-group" role="group" aria-label="보기 필터">
+        <button type="button" class="navi" data-filter="all" aria-pressed="true"><span>전체</span><span class="n" data-fcount="all">-</span></button>
+        <button type="button" class="navi" data-filter="candidates" aria-pressed="false"><span>차이 있음</span><span class="n" data-fcount="candidates">-</span></button>
+        <button type="button" class="navi" data-filter="held" aria-pressed="false"><span>보류</span><span class="n" data-fcount="held">-</span></button>
+        <button type="button" class="navi" data-filter="resolved" aria-pressed="false"><span>판단 완료</span><span class="n" data-fcount="resolved">-</span></button>
+      </div>
+      <p class="lab">03 · Model</p>
+      <div class="model-status" id="modelStatus" data-state="checking">
+        <span class="live" aria-hidden="true"></span>
+        <span class="model-text">
+          <span id="modelStatusText" role="status">연결 확인 중</span>
+          <span class="model-name" id="modelName">실험 모델</span>
+          <span class="model-meta" id="modelMeta"></span>
+        </span>
+        <button id="classifierCheck" type="button" class="link-btn">다시 확인</button>
+      </div>
+    </nav>
+    <div class="ws" id="ws" data-mode="browse">
+      <aside class="list-pane col" aria-label="기록 목록">
+        <div class="bar">
+          <h2 id="listTitle">내 실제 자료</h2>
+          <p id="progress" class="k" role="status" aria-live="polite"></p>
+        </div>
+        <form id="filterForm" class="search" role="search">
+          <label class="sr-only" for="searchInput">기록 찾기</label>
+          <input id="searchInput" type="search" placeholder="파일명 또는 경로 검색" autocomplete="off">
+        </form>
+        <div id="summary" class="summary"></div>
+        <div id="listTools" class="list-tools"></div>
+        <div id="listBody" class="rows" aria-busy="true"></div>
+        <div id="pager" class="pager"></div>
+        <button id="selectedReport" type="button" class="btn" disabled>체크한 0건 보고서</button>
+      </aside>
+      <article class="detail-pane col" id="detail" aria-label="기록 상세"></article>
+      <aside class="props col" id="props" aria-label="판단"></aside>
+    </div>
   </section>
-  <section id="viewHandover" class="view" hidden aria-label="인수인계"></section>
-  <section id="viewRules" class="view" hidden aria-label="규칙과 AgentStream"></section>
+  <section id="viewHandover" class="view" hidden aria-label="검수 보고서 고정본"></section>
+  <section id="viewRules" class="view" hidden aria-label="사용 안내와 규칙"></section>
 </main>
-<script src="static/app.js" defer></script>
+<div id="mbar" class="mbar" role="group" aria-label="빠른 판단" hidden></div>
+<dialog id="importDialog" aria-labelledby="importTitle" aria-describedby="importHelp">
+  <div class="dialog-top">
+    <span class="k">비공개 작업공간</span>
+    <button id="importClose" type="button" class="btn" aria-label="자료 가져오기 닫기">닫기</button>
+  </div>
+  <form id="importForm" class="import-form" aria-describedby="importHelp">
+    <h2 id="importTitle">자료 가져오기</h2>
+    <p class="help" id="importHelp">같은 이름의 JPEG와 JSON을 여러 쌍 한꺼번에 선택하세요. 이 브라우저의 비공개 작업공간에 저장하며 원문은 바꾸지 않습니다.</p>
+    <div id="importDrop"></div>
+    <div id="pairSummary" class="pair-summary" hidden></div>
+    <ul id="pairList" class="pair-list" aria-label="가져올 파일 쌍"></ul>
+    <details class="file-rules"><summary>파일 규칙과 보관 한도</summary><p id="importLimits" class="help"></p></details>
+    <div class="dialog-foot">
+      <label class="check consent">
+        <input id="autoAi" type="checkbox" checked>
+        <span>가져온 뒤 바로 AI 비교 (사진을 실험 모델로 전송)</span>
+      </label>
+      <p id="autoAiHelp" class="help"></p>
+      <div class="dialog-actions">
+        <button id="importSubmit" type="submit" class="btn black" disabled><span id="importSubmitLabel">가져오기</span><span class="btn-progress" aria-hidden="true"><i id="importBar"></i></span></button>
+        <button id="importReview" type="button" class="btn tea" hidden>저장된 기록 검수하기</button>
+      </div>
+      <p id="importStatus" role="status" aria-live="polite" aria-atomic="true"></p>
+    </div>
+  </form>
+</dialog>
+<dialog id="lightbox" class="lightbox" aria-label="사진 크게 보기">
+  <div class="lb-bar">
+    <span class="k" id="lbCaption">SOURCE IMAGE</span>
+    <span class="lb-actions">
+      <button id="lbZoom" type="button" class="btn mini" aria-pressed="false">확대</button>
+      <button id="lbClose" type="button" class="btn mini">닫기 (Esc)</button>
+    </span>
+  </div>
+  <div class="lb-stage" id="lbStage"><img id="lbImg" class="fit" alt=""></div>
+</dialog>
+<script src="static/app.js?v=review-flow-20261107-v5c" defer></script>
 </body>
 </html>

@@ -25,6 +25,11 @@
 
 ## GET /api/records?filter=&page=&page_size=&q=
 `filter` = candidates|all|held|needs_review|resolved.
+`scope` = actual|demo|all, API 기본값 all. 화면 기본값은 actual이다.
+actual은 비공개 가져오기와 실제 서버 자료, demo는 합성·주입 시연 자료다.
+응답의 `summary`는 선택한 scope 안에서 검색·필터·페이지 적용 전의
+total/candidates/held/needs_review/resolved 수를 제공한다.
+화면은 이 요약만 사용하며 실제 자료 집계에 시연 기록을 합산하지 않는다.
 ```json
 {"items":[{"id":"...","label":"...","crop":"녹차","growth_week":3,"origin":"actual|injected|recorded|synthetic",
   "candidate":true,"matched_rules":["PH_SCREEN"],"group_id":"g1|null",
@@ -61,6 +66,22 @@
  "history":[{"at":"...","actor":"...","type":"correction|review|hold|resolve|recheck|classify","summary":"...","before":"...","after":"..."}]}
 ```
 `GET /api/records/{id}/image`: 이미지 바이트(380x380). 불가 시 404 → 프런트가 대체 문구 표시.
+
+### 결과·흐름 개편의 추가 필드
+
+- `model.crop_confidence`, `model.growth_confidence`: 각각의 분류 점수 문자열 또는 null.
+  과거 `confidence`는 작물 점수이며 호환 보존한다. 없는 주차 점수는 추측하지 않는다.
+- `model_attempt`: 최근 시도 또는 null. 재시도 실패 시에도 `model`에는
+  이전에 채택한 성공 결과가 유지된다. 처음부터 실패한 경우에는 model에 실패를 표시한다.
+- `comparison`: status(equal/different/unavailable), current_week/model_week(문자열 또는 null),
+  week_matches/crop_matches(boolean 또는 null). 서버의 정확한 수치 비교를 사용하며
+  프런트에서 Number로 재계산하지 않는다.
+- `peers[].crop`: 비교 대상의 작물. 같은 정규화 작물·주차·단위 조건을 모두 만족한다.
+
+사진 추론과 보정 이후 화면은 반환된 revision으로 `/recheck`를 순차 호출한다.
+규칙 갱신만 자동화하며 reviewed/hold/resolve는 사람이 명시적으로 저장한다.
+보고서 생성 요청의 record_ids는 현재 기록 1건 또는 체크한 ID 목록이다.
+화면에서는 null(전체 후보 자동 포함)을 보내지 않는다.
 
 ## 요청 본문(계획 고정 형태)
 - review: `{"expected_revision":4,"action":"reviewed|hold|resolve","note":str,"next_action":str,"evidence_note":str,"evidence_refs":[str]}`
