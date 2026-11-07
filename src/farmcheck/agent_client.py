@@ -16,7 +16,7 @@ from farmcheck.service import JSON_OBJECT
 from farmcheck.store import DomainError
 
 BASE_URL = "https://api-gateway.jntp-ax.or.kr/agentstream"
-MAX_STREAM_BYTES = 256 * 1024
+MAX_STREAM_BYTES = 4 * 1024 * 1024
 MAX_SESSION_BYTES = 16384
 MAX_SESSION_ID = 200
 

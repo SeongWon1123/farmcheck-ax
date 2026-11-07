@@ -243,6 +243,39 @@ def test_fragmented_utf8_stream() -> None:
     assert asyncio.run(run()) == ["녹차"]
 
 
+def test_long_answer_with_verbose_provider_chunks() -> None:
+    """AgentStream sends ~485 bytes per character chunk; a normal answer exceeds 256 KiB."""
+    chunk = {
+        "content": "가",
+        "additional_kwargs": {"thinking_content": "", "session_id": str(uuid4())},
+        "type": "AIMessageChunk",
+        "name": None,
+        "id": "run--" + str(uuid4()),
+        "tool_calls": [],
+        "invalid_tool_calls": [],
+        "tool_call_chunks": [],
+        "event": "assistant.delta",
+        "padding": "x" * 250,
+    }
+    line = json.dumps(chunk, ensure_ascii=False) + "\n"
+    count = 1200
+    raw = (line * count + '{"event":"turn.completed"}\n').encode()
+    assert len(raw) > 256 * 1024
+
+    async def run() -> list[str]:
+        client = AgentClient(AgentConfig("test", str(uuid4())))
+        await client.close()
+        client.http = httpx2.AsyncClient(
+            transport=httpx2.MockTransport(lambda _: httpx2.Response(200, content=raw)),
+        )
+        try:
+            return [delta async for delta in client.deltas("session", "question")]
+        finally:
+            await client.close()
+
+    assert "".join(asyncio.run(run())) == "가" * count
+
+
 def test_missing_configuration_keeps_review_available(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

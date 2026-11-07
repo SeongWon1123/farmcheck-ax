@@ -537,11 +537,15 @@
     const photo = warnings.filter((w) => PHOTO_CODES.has(w.code));
     if (photo.length) out.push({ text: photo.map(qualityTitle).join(", ") + " · " + photo.map(qualityEvidence).join(", ") });
     for (const k of ruleFlags(d)) out.push({ text: (L.rules[k.rule_id] || "규칙 확인") + (k.next_question ? " · " + k.next_question : " 필요") });
+    const cw = currentWeek(d), mw = modelWeek(d);
+    if (m.status === "ok" && cw != null && mw != null && String(cw) !== String(mw)) out.push({ text: "원본 " + weekText(cw) + " · AI " + weekText(mw) + "로 다름" });
     return out;
   }
   function hintNode(d) {
     const list = hintCandidates(d), top = list[0], node = h("div", { id: "hintSlot", class: "hint", hidden: !top });
-    if (top) node.append(...[h("span", { class: "hint-text", text: top.text }), top.action, list.length > 1 ? h("span", { class: "hint-more", text: "외 " + (list.length - 1) + "건" }) : null].filter(Boolean));
+    if (top) node.append(...[h("span", { class: "hint-text", text: top.text }), top.action, list.length > 1 ? h("span", { class: "hint-more", text: "외 " + (list.length - 1) + "건" }) : null,
+      explainable(d) ? h("button", { type: "button", class: "text-button hint-explain", "aria-expanded": String(explainState(d.id).open), "aria-controls": "explainSlot",
+        text: explainState(d.id).open ? "설명 닫기" : "왜 다른지 AI 설명", onclick: () => toggleExplain(d) }) : null].filter(Boolean));
     return node;
   }
   const ruleFlags = (d) => matchedChecks(d).filter((check) => check.rule_id !== "MODEL_RECORD_DIFFERENCE");
@@ -630,74 +634,51 @@
             h("button", { type: "button", class: "btn mini", id: "nextRecord", disabled: !pos || pos.last, title: "다음 기록 (J)", text: "다음 ›", onclick: () => stepRecord(1) })),
           h("button", { type: "button", class: "btn mini", text: "이 기록 보고서", onclick: () => { S.handoverScope = "current"; setView("handover"); } }))),
       h("div", { class: "doc" },
-        h("div", { class: "rv" }, photoNode(d), h("div", { class: "rv-side" }, compareNode(d), hintNode(d), h("div", { id: "decisionSlot", class: "decision-slot" }))),
-        chatNode(d), footNode(d)));
+        h("div", { class: "rv" }, photoNode(d), h("div", { class: "rv-side" }, compareNode(d), hintNode(d), explainNode(d), h("div", { id: "decisionSlot", class: "decision-slot" }))),
+        footNode(d)));
     renderDecision();
   }
 
-  /* Record-scoped chatbot; keys and provider session IDs never enter the browser. */
-  const chats = new Map();
-  function chatState(id) {
-    if (!chats.has(id)) chats.set(id, { turns: [], loaded: false, loading: false, busy: false, question: "", partial: "", error: "" });
-    return chats.get(id);
+  /* AI explanation of why the record and AI/rules disagree; keys and sessions stay on the server. */
+  const EXPLAIN_QUESTION = "이 기록에서 원본 기록과 AI 예측·규칙 결과가 어디서 어긋나는지 설명하고, 먼저 확인할 것을 알려 주세요.";
+  const explains = new Map();
+  function explainState(id) {
+    if (!explains.has(id)) explains.set(id, { open: false, busy: false, text: "", error: "", revision: null });
+    return explains.get(id);
   }
-  function refreshChat(id) {
-    if (S.id !== id || !S.detail) return;
-    const slot = document.getElementById("recordChat");
-    if (slot) slot.replaceWith(chatNode(S.detail));
+  const explainable = (d) => S.boot?.agent_status?.status === "configured" && hintCandidates(d).length > 0;
+  function refreshExplain(d) {
+    if (S.id !== d.id || !S.detail) return;
+    $("hintSlot")?.replaceWith(hintNode(S.detail));
+    $("explainSlot")?.replaceWith(explainNode(S.detail));
   }
-  async function loadChat(id) {
-    const state = chatState(id);
-    if (state.loading || state.loaded) return;
-    state.loading = true;
-    try {
-      const result = await api("GET", "/api/agent/conversations/" + enc(id));
-      state.turns = result.turns || []; state.loaded = true;
-    } catch (error) { state.error = error.message; }
-    finally { state.loading = false; refreshChat(id); }
+  function toggleExplain(d) {
+    const state = explainState(d.id);
+    state.open = !state.open;
+    if (state.open && !state.busy && (state.revision !== d.revision || state.error || !state.text)) fetchExplain(d);
+    refreshExplain(d);
   }
-  function chatTurn(turn, d) {
-    const stale = turn.stale || turn.revision !== d.revision;
-    return h("article", { class: "chat-turn" },
-      h("p", { class: "chat-question", text: "질문 · " + turn.question }),
-      stale ? h("p", { class: "chat-warning", text: "이전 기록 버전의 답변입니다. 현재 값은 다시 질문해 확인하세요." }) : null,
-      h("div", { class: "chat-answer", text: turn.answer }),
-      turn.unverified_citations ? h("p", { class: "chat-warning", text: "확인되지 않은 출처 번호가 포함되어 있습니다. 원문 근거를 직접 확인하세요." }) : null,
-      (turn.evidence || []).length ? h("details", { class: "chat-evidence" },
-        h("summary", { text: "답변에 인용된 기록 근거 · " + turn.evidence.length + "개" }),
-        turn.evidence.map((item) => h("div", {},
-          h("strong", { text: "[" + item.id + "] " + fieldName(item.label) + " · 기록 버전 " + item.revision }),
-          h("pre", { text: JSON.stringify(item.value, null, 2) })))) : null);
-  }
-  async function sendChat(d) {
-    const state = chatState(d.id), question = state.question.trim();
-    if (state.busy || !question) return;
-    state.busy = true; state.error = ""; state.partial = ""; refreshChat(d.id);
+  async function fetchExplain(d) {
+    const state = explainState(d.id);
+    state.busy = true; state.error = ""; state.text = ""; state.revision = d.revision; refreshExplain(d);
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 100000);
     let reader;
     try {
-      if (!state.loaded) {
-        const history = await api("GET", "/api/agent/conversations/" + enc(d.id));
-        state.turns = history.turns || []; state.loaded = true;
-      }
       const response = await fetch(BASE + "/api/agent/query", {
         method: "POST", credentials: "same-origin", signal: controller.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ record_id: d.id, question, expected_revision: d.revision }),
+        body: JSON.stringify({ record_id: d.id, question: EXPLAIN_QUESTION, expected_revision: d.revision }),
       });
-      if (!response.ok) { const body = await response.json(); throw new Error(body.message || "질문을 보내지 못했습니다."); }
-      if (!response.body) throw new Error("스트림을 읽지 못했습니다.");
+      if (!response.ok) { const body = await response.json(); throw new Error(body.message || "AI 설명을 불러오지 못했습니다."); }
+      if (!response.body) throw new Error("AI 설명을 읽지 못했습니다.");
       reader = response.body.getReader();
       const decoder = new TextDecoder(); let buffer = "", complete = false;
       function receive(line) {
         if (!line.trim()) return;
         const event = JSON.parse(line);
         if (event.event === "error") throw new Error(event.message);
-        if (event.event === "assistant.delta") { state.partial += event.content; refreshChat(d.id); }
-        if (event.event === "turn.completed") {
-          state.turns.push(event); state.turns = state.turns.slice(-20); state.partial = "";
-          state.question = ""; state.loaded = true; complete = true;
-        }
+        if (event.event === "assistant.delta") { state.text += event.content; refreshExplain(d); }
+        if (event.event === "turn.completed") { state.text = event.answer || state.text; complete = true; }
       }
       while (true) {
         const { value, done } = await reader.read();
@@ -706,42 +687,32 @@
         while ((index = buffer.indexOf("\n")) >= 0) { receive(buffer.slice(0, index)); buffer = buffer.slice(index + 1); }
         if (done) { if (buffer.trim()) receive(buffer); break; }
       }
-      if (!complete) throw new Error("답변이 중단되었습니다. 아래 내용은 완성된 답변이 아닙니다.");
-      announce("기록에 대한 AI 답변이 도착했습니다.");
-    } catch (error) { state.error = error.name === "AbortError" ? "응답 시간이 초과되었습니다. 연결을 확인하고 다시 질문해 주세요." : error.message; }
-    finally { clearTimeout(timer); if (reader) { await reader.cancel().catch(() => {}); reader.releaseLock(); } state.busy = false; refreshChat(d.id); }
+      if (!complete) throw new Error("설명이 중간에 끊겼습니다. 다시 시도해 주세요.");
+      announce("AI 설명이 도착했습니다.");
+    } catch (error) {
+      state.error = error.name === "AbortError" ? "응답 시간이 초과되었습니다. 다시 시도해 주세요." : error.message;
+    } finally {
+      clearTimeout(timer);
+      if (reader) { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+      state.busy = false; refreshExplain(d);
+    }
   }
-  async function resetChat(d) {
-    const state = chatState(d.id);
-    if (state.busy) return;
-    state.busy = true; refreshChat(d.id);
-    try {
-      await api("DELETE", "/api/agent/conversations/" + enc(d.id));
-      state.turns = []; state.partial = ""; state.error = ""; state.loaded = true;
-    } catch (error) { state.error = error.message; }
-    finally { state.busy = false; refreshChat(d.id); }
+  function explainLines(text) {
+    return text.replace(/\s*\[E\d+\]/g, "").split(/\n+/).map((line) => line.trim()).filter(Boolean).map((line) => {
+      const m = /^(?:\d\)\s*)?(어디가 다른가|가능한 이유|먼저 확인할 것)\s*[:：]\s*(.*)$/.exec(line);
+      return m ? h("p", {}, h("b", { text: m[1] }), " " + m[2]) : h("p", { text: line });
+    });
   }
-  function chatNode(d) {
-    const state = chatState(d.id), configured = S.boot?.agent_status?.status === "configured";
-    const input = h("textarea", { id: "chatQuestion", rows: 3, maxlength: 2000, value: state.question,
-      placeholder: "예: 기록 주차와 AI 예측이 다른데 무엇을 먼저 확인해야 하나요?", disabled: state.busy,
-      oninput: (event) => { state.question = event.target.value; } });
-    const form = h("form", { class: "chat-form", onsubmit: (event) => { event.preventDefault(); sendChat(d); } },
-      h("label", { for: "chatQuestion", text: "이 기록에 대해 질문하기" }), input,
-      h("div", { class: "chat-actions" },
-        h("button", { type: "submit", class: "btn tea", disabled: state.busy, text: state.busy ? "답변 기다리는 중…" : "질문 보내기" }),
-        h("button", { type: "button", class: "btn mini", disabled: state.busy, text: "새 대화", onclick: () => resetChat(d) })));
-    return h("section", { id: "recordChat", class: "record-chat", "aria-label": "기록 근거 AI 도우미" },
-      h("p", { class: "k", text: "AI · 기록 설명" }), h("h3", { text: "이 차이를 어떻게 확인할까요?" }),
-      h("p", { class: "help", text: "질문을 보내면 선택한 기록의 수치·규칙·AI 결과·검토 메모가 AgentStream으로 전송됩니다. 사진 자체는 보내지 않습니다. AI 설명은 검토 참고용이며 값을 자동 수정하지 않습니다." }),
-      !configured ? h("p", { class: "help", text: S.boot?.agent_status?.message || "챗봇 서버 설정을 기다리고 있습니다." }) :
-        h("div", {},
-          !state.loaded ? h("button", { type: "button", class: "btn mini", disabled: state.loading || state.busy, text: state.loading ? "이전 대화 확인 중…" : "이 기록의 이전 대화 보기", onclick: () => loadChat(d.id) }) : null,
-          h("div", { class: "chat-turns" }, state.turns.map((turn) => chatTurn(turn, d))),
-          state.partial ? h("div", { class: "chat-partial" }, h("p", { class: "help", text: state.busy ? "답변 작성 중…" : "중단된 답변 · 완성되지 않음" }), h("div", { class: "chat-answer", text: state.partial })) : null,
-          state.error ? h("p", { class: "chat-warning", role: "alert", text: state.error }) : null,
-          h("div", { class: "chat-suggestions" }, ["원본과 AI 예측이 다른 이유를 근거와 함께 설명해 주세요.", "이 기록에서 먼저 확인할 값과 확인 순서를 알려 주세요.", "담당자에게 확인할 질문과 보류 사유를 작성해 주세요."].map((question) =>
-            h("button", { type: "button", class: "btn mini", disabled: state.busy, text: question, onclick: () => { state.question = question; refreshChat(d.id); $("chatQuestion")?.focus(); } }))), form));
+  function explainNode(d) {
+    const state = explainState(d.id), node = h("div", { id: "explainSlot", class: "explain", hidden: !state.open || !explainable(d) });
+    if (node.hidden) return node;
+    node.append(h("p", { class: "explain-k", text: "AI 설명 · AgentStream" }));
+    if (state.text) node.append(...explainLines(state.text));
+    if (state.busy) node.append(h("p", { class: "help", text: state.text ? "설명 작성 중…" : "AI 설명을 불러오는 중…" }));
+    if (state.error) node.append(h("p", { class: "chat-warning", role: "alert", text: state.error }),
+      h("button", { type: "button", class: "btn mini", text: "다시 시도", onclick: () => fetchExplain(d) }));
+    node.append(h("p", { class: "explain-note", text: "사진은 보내지 않고 기록 값·규칙·AI 결과만 보냅니다. 판단과 원본은 바꾸지 않습니다." }));
+    return node;
   }
 
   /* ---------- photo check: advisory hints, never a verdict (docs/quality-checks-eval.md) ---------- */
