@@ -356,6 +356,7 @@ class Service:
                         "declared_height": record.declared_dimensions.height,
                     },
                 },
+                "crop_values": {"original": record.crop, "current": crop, "model": model_crop},
                 "values": values,
                 "checks": checks,
                 "time": {
@@ -383,6 +384,7 @@ class Service:
                     "정상 범위나 성장 추세가 아닙니다."
                 ),
                 "review": {
+                    "note": state.note,
                     "review_state": state.review_state,
                     "resolution_state": state.resolution_state,
                     "hold": {"reason": state.hold_reason, "next_action": state.next_action},

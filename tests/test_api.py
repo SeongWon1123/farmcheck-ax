@@ -63,7 +63,7 @@ def test_manual_workflow_and_frozen_exports(tmp_path: Path) -> None:
         assert View.model_validate_json(client.get(f"/api/handovers/{identifier}").text).root[
             "superseded_by_newer_revision"
         ] is True
-        assert client.post("/api/agent/query", json={"query": "해결해"}).status_code == 503
+        assert client.post("/api/agent/query", json={"query": "해결해"}).status_code == 422
         context = client.post("/api/agent/context", json={"record_ids": [candidate.id]})
         assert context.status_code == 200
 

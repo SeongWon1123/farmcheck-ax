@@ -631,8 +631,117 @@
           h("button", { type: "button", class: "btn mini", text: "이 기록 보고서", onclick: () => { S.handoverScope = "current"; setView("handover"); } }))),
       h("div", { class: "doc" },
         h("div", { class: "rv" }, photoNode(d), h("div", { class: "rv-side" }, compareNode(d), hintNode(d), h("div", { id: "decisionSlot", class: "decision-slot" }))),
-        footNode(d)));
+        chatNode(d), footNode(d)));
     renderDecision();
+  }
+
+  /* Record-scoped chatbot; keys and provider session IDs never enter the browser. */
+  const chats = new Map();
+  function chatState(id) {
+    if (!chats.has(id)) chats.set(id, { turns: [], loaded: false, loading: false, busy: false, question: "", partial: "", error: "" });
+    return chats.get(id);
+  }
+  function refreshChat(id) {
+    if (S.id !== id || !S.detail) return;
+    const slot = document.getElementById("recordChat");
+    if (slot) slot.replaceWith(chatNode(S.detail));
+  }
+  async function loadChat(id) {
+    const state = chatState(id);
+    if (state.loading || state.loaded) return;
+    state.loading = true;
+    try {
+      const result = await api("GET", "/api/agent/conversations/" + enc(id));
+      state.turns = result.turns || []; state.loaded = true;
+    } catch (error) { state.error = error.message; }
+    finally { state.loading = false; refreshChat(id); }
+  }
+  function chatTurn(turn, d) {
+    const stale = turn.stale || turn.revision !== d.revision;
+    return h("article", { class: "chat-turn" },
+      h("p", { class: "chat-question", text: "질문 · " + turn.question }),
+      stale ? h("p", { class: "chat-warning", text: "이전 기록 버전의 답변입니다. 현재 값은 다시 질문해 확인하세요." }) : null,
+      h("div", { class: "chat-answer", text: turn.answer }),
+      turn.unverified_citations ? h("p", { class: "chat-warning", text: "확인되지 않은 출처 번호가 포함되어 있습니다. 원문 근거를 직접 확인하세요." }) : null,
+      (turn.evidence || []).length ? h("details", { class: "chat-evidence" },
+        h("summary", { text: "답변에 인용된 기록 근거 · " + turn.evidence.length + "개" }),
+        turn.evidence.map((item) => h("div", {},
+          h("strong", { text: "[" + item.id + "] " + fieldName(item.label) + " · 기록 버전 " + item.revision }),
+          h("pre", { text: JSON.stringify(item.value, null, 2) })))) : null);
+  }
+  async function sendChat(d) {
+    const state = chatState(d.id), question = state.question.trim();
+    if (state.busy || !question) return;
+    state.busy = true; state.error = ""; state.partial = ""; refreshChat(d.id);
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 100000);
+    let reader;
+    try {
+      if (!state.loaded) {
+        const history = await api("GET", "/api/agent/conversations/" + enc(d.id));
+        state.turns = history.turns || []; state.loaded = true;
+      }
+      const response = await fetch(BASE + "/api/agent/query", {
+        method: "POST", credentials: "same-origin", signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ record_id: d.id, question, expected_revision: d.revision }),
+      });
+      if (!response.ok) { const body = await response.json(); throw new Error(body.message || "질문을 보내지 못했습니다."); }
+      if (!response.body) throw new Error("스트림을 읽지 못했습니다.");
+      reader = response.body.getReader();
+      const decoder = new TextDecoder(); let buffer = "", complete = false;
+      function receive(line) {
+        if (!line.trim()) return;
+        const event = JSON.parse(line);
+        if (event.event === "error") throw new Error(event.message);
+        if (event.event === "assistant.delta") { state.partial += event.content; refreshChat(d.id); }
+        if (event.event === "turn.completed") {
+          state.turns.push(event); state.turns = state.turns.slice(-20); state.partial = "";
+          state.question = ""; state.loaded = true; complete = true;
+        }
+      }
+      while (true) {
+        const { value, done } = await reader.read();
+        buffer += decoder.decode(value, { stream: !done });
+        let index;
+        while ((index = buffer.indexOf("\n")) >= 0) { receive(buffer.slice(0, index)); buffer = buffer.slice(index + 1); }
+        if (done) { if (buffer.trim()) receive(buffer); break; }
+      }
+      if (!complete) throw new Error("답변이 중단되었습니다. 아래 내용은 완성된 답변이 아닙니다.");
+      announce("기록에 대한 AI 답변이 도착했습니다.");
+    } catch (error) { state.error = error.name === "AbortError" ? "응답 시간이 초과되었습니다. 연결을 확인하고 다시 질문해 주세요." : error.message; }
+    finally { clearTimeout(timer); if (reader) { await reader.cancel().catch(() => {}); reader.releaseLock(); } state.busy = false; refreshChat(d.id); }
+  }
+  async function resetChat(d) {
+    const state = chatState(d.id);
+    if (state.busy) return;
+    state.busy = true; refreshChat(d.id);
+    try {
+      await api("DELETE", "/api/agent/conversations/" + enc(d.id));
+      state.turns = []; state.partial = ""; state.error = ""; state.loaded = true;
+    } catch (error) { state.error = error.message; }
+    finally { state.busy = false; refreshChat(d.id); }
+  }
+  function chatNode(d) {
+    const state = chatState(d.id), configured = S.boot?.agent_status?.status === "configured";
+    const input = h("textarea", { id: "chatQuestion", rows: 3, maxlength: 2000, value: state.question,
+      placeholder: "예: 기록 주차와 AI 예측이 다른데 무엇을 먼저 확인해야 하나요?", disabled: state.busy,
+      oninput: (event) => { state.question = event.target.value; } });
+    const form = h("form", { class: "chat-form", onsubmit: (event) => { event.preventDefault(); sendChat(d); } },
+      h("label", { for: "chatQuestion", text: "이 기록에 대해 질문하기" }), input,
+      h("div", { class: "chat-actions" },
+        h("button", { type: "submit", class: "btn tea", disabled: state.busy, text: state.busy ? "답변 기다리는 중…" : "질문 보내기" }),
+        h("button", { type: "button", class: "btn mini", disabled: state.busy, text: "새 대화", onclick: () => resetChat(d) })));
+    return h("section", { id: "recordChat", class: "record-chat", "aria-label": "기록 근거 AI 도우미" },
+      h("p", { class: "k", text: "AI · 기록 설명" }), h("h3", { text: "이 차이를 어떻게 확인할까요?" }),
+      h("p", { class: "help", text: "질문을 보내면 선택한 기록의 수치·규칙·AI 결과·검토 메모가 AgentStream으로 전송됩니다. 사진 자체는 보내지 않습니다. AI 설명은 검토 참고용이며 값을 자동 수정하지 않습니다." }),
+      !configured ? h("p", { class: "help", text: S.boot?.agent_status?.message || "챗봇 서버 설정을 기다리고 있습니다." }) :
+        h("div", {},
+          !state.loaded ? h("button", { type: "button", class: "btn mini", disabled: state.loading || state.busy, text: state.loading ? "이전 대화 확인 중…" : "이 기록의 이전 대화 보기", onclick: () => loadChat(d.id) }) : null,
+          h("div", { class: "chat-turns" }, state.turns.map((turn) => chatTurn(turn, d))),
+          state.partial ? h("div", { class: "chat-partial" }, h("p", { class: "help", text: state.busy ? "답변 작성 중…" : "중단된 답변 · 완성되지 않음" }), h("div", { class: "chat-answer", text: state.partial })) : null,
+          state.error ? h("p", { class: "chat-warning", role: "alert", text: state.error }) : null,
+          h("div", { class: "chat-suggestions" }, ["원본과 AI 예측이 다른 이유를 근거와 함께 설명해 주세요.", "이 기록에서 먼저 확인할 값과 확인 순서를 알려 주세요.", "담당자에게 확인할 질문과 보류 사유를 작성해 주세요."].map((question) =>
+            h("button", { type: "button", class: "btn mini", disabled: state.busy, text: question, onclick: () => { state.question = question; refreshChat(d.id); $("chatQuestion")?.focus(); } }))), form));
   }
 
   /* ---------- photo check: advisory hints, never a verdict (docs/quality-checks-eval.md) ---------- */
@@ -1603,7 +1712,7 @@
             h("p", { text: "단정하지 않는 것: " + val(r.not_concluded) }), h("p", { text: "다음 질문: " + val(r.next_question) })))
             : h("p", { class: "muted-text", text: "규칙 목록을 불러오지 못했습니다." }),
           h("p", { class: "k", text: "AgentStream" }),
-          h("p", { text: "에이전트 질의는 아직 연결되지 않았습니다. 이미지 분류 모델 연결과는 별개이며 수동 검수와 보고서는 사용할 수 있습니다." }),
+          h("p", { text: "기록 상세의 AI 기록 설명에서 선택한 자료에 대해 질문할 수 있습니다. 대화 API는 이미지 분류 모델과 별개입니다." }),
           h("p", { class: "muted-text", text: "아래 내보내기는 에이전트가 읽을 자료를 미리 확인하는 읽기 전용 기능이며 에이전트 응답이 아닙니다." }), cb, ctxOut))));
   }
 

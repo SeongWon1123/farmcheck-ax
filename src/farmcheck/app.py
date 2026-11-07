@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import RequestResponseEndpoint
 
-from farmcheck.agent_boundary import AgentStatus
+from farmcheck.agent_routes import configured_status, register_agent_routes
 from farmcheck.import_routes import MAX_IMPORT_BODY, register_import_routes
 from farmcheck.model_connection import model_identity
 from farmcheck.model_routes import register_model_routes
@@ -156,7 +156,7 @@ def create_app(
                 "mode": selected_mode,
                 "summary": service.summary(snapshot).root,
                 "rule_registry": [json_object(rule) for rule in RULE_REGISTRY],
-                "agent_status": json_object(AgentStatus()),
+                "agent_status": json_object(configured_status()),
                 "source_problems": [json_object(problem) for problem in selected_catalog.problems],
             }
         )
@@ -166,6 +166,7 @@ def create_app(
     register_workflow_routes(router, service, workspace)
     register_model_routes(router, service, workspace)
     register_snapshot_routes(router, service, workspace)
+    register_agent_routes(router, service, workspace)
     application.include_router(router)
     application.mount(route_prefix + "/static", StaticFiles(directory=static), name="static")
     return application

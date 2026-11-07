@@ -1,5 +1,5 @@
 # Copyright (c) 2026 FarmCheck contributors.
-"""Disabled live provider and testable read-only response boundary."""
+"""Provider status and testable read-only structured response boundary."""
 
 from pydantic import Field
 
@@ -7,10 +7,10 @@ from farmcheck.store import DomainError, FrozenModel
 
 
 class AgentStatus(FrozenModel):
-    """Truthful provider state for today's manual workflow."""
+    """Provider configuration state without claiming a completed live check."""
 
-    status: str = "disabled_by_owner"
-    message: str = "AgentStream은 내일 연동 예정입니다. 수동 검토와 인수인계는 사용 가능합니다."
+    status: str = "not_configured"
+    message: str = "챗봇 서버 설정을 기다리고 있습니다. 수동 검토와 보고서는 사용 가능합니다."
     live: bool = False
 
 

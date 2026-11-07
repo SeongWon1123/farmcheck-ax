@@ -72,3 +72,35 @@ R10은 단위 객체의 잘못된 문자열 표시와 불필요한 린트 제외
 이 단계의 회귀 검사는 pytest 66개, Ruff, basedpyright, JavaScript 구문 검사와
 frontend draftguard를 통과했다. 증거는 개발 작업공간의
 `.omo/evidence/ulw/01a1af23-bbd4-7000-8ebd-deaca5c1b198/`에 보관한다.
+
+## 2026-11-07 AgentStream 기록 설명 연결
+
+현재 `/data/hackathon/farmcheck/app` 서버에 구현하고 Supervisor의 farmcheck만 재시작했다.
+서버 전용 키 설정, 사용자 작업공간·기록별 세션 DB, NDJSON 스트리밍, 최신 기록 문맥,
+인용된 필드 근거 표시, 이전 버전 경고, 최근 20개 문답 복원, 새 대화를 추가했다.
+사진·다른 기록·브라우저 인증 헤더는 챗봇에 전달하지 않는다.
+
+- 전체 pytest: 148개 통과. 새 대화 관련 11개 테스트 포함.
+- 변경된 서버 코드 타입 검사: 오류·경고 0. `ruff check src` 및 새 테스트·설정 스크립트 통과.
+- JavaScript 구문 검사 통과. Chromium + 모의 제공자로 데스크톱·390px 모바일 흐름 확인.
+- 스트림 부분 표시, 후속 질문, 새로고침 후 이력 복원, 새 대화, 원문 근거 표시 확인.
+- 모델 문자열에 포함한 HTML 스크립트가 실행되지 않음, 브라우저의 제공자 직접 요청 0건.
+- 현재 서버 loopback 8501의 v8 페이지·bootstrap·health 정상. 키 미설정 시 agent_not_configured 503.
+- 현재 서버 설정 접두사 `/i/PJV72AFlBV8kATg_`의 외부 응답은 DevStream HTML이다.
+- 기존 공개 `/i/SpPClk4QcdJwast1/`는 정상 팜체크지만 아직 v7이며 새 코드와 일치하지 않는다.
+- 서버 설정 파일이 아직 없어 실제 AgentStream 답변·외부 공개 배포 완료는 검증하지 않았다.
+  `python3 /data/hackathon/farmcheck/app/scripts/configure_agentstream.py`로 설정 후 확인해야 한다.
+
+### AgentStream 실제 API 확인
+
+설정 파일 권한 600 및 챗봇 UUID 확인 후 실행한 실제 호출 결과:
+
+- 챗봇 `/health`: HTTP 200, `healthy`, LLM 응답.
+- 새 대화 세션 생성: HTTP 201.
+- JSON 객체 형태의 전체 문맥은 provider에서 `INVALID_TABLE_INPUT` 실패. 자연어 필드와 출처 번호의 평문으로 바꾸어 해결.
+- 변경 후 선택한 합성 기록 문맥으로 질문 2회 스트리밍 완료. 두 번째 질문은 같은 `session_id`로 이어짐.
+- 응답에서 pH 원문 16, pH 단위, `PH_SCREEN`의 `pH > 14` 선별 조건과 다음 원본 확인 순서를 언급.
+- 프롬프트를 보강해 pH 값으로 센서 고장·입력 오류를 확정하지 않고, 기록 밖의 재배 기준·정상값을 추측하지 않도록 제한.
+- 웹 앱 경유 조회로 원본 record 응답 전후가 동일하고, 두 문답을 작업공간에 복원 가능하게 저장함.
+- 실제 시험은 synthetic 예제만 사용. 사진을 전송하거나 실제 녹차 자료를 시험하지 않음.
+- 비밀 키는 로그·테스트 보고·브라우저 응답에 출력하지 않음.

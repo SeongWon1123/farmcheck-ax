@@ -1,16 +1,16 @@
 # Copyright (c) 2026 FarmCheck contributors.
-"""Immutable handover and explicitly disabled agent HTTP boundaries."""
+"""Immutable handover and read-only agent context export."""
 
 from collections.abc import Callable
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
-from farmcheck.agent_boundary import AgentStatus
+from farmcheck.agent_routes import configured_status
 from farmcheck.handover import CaptureInput, export_snapshot
 from farmcheck.rules import RULE_VERSION
 from farmcheck.service import JSON_OBJECT, Service, View, json_object
-from farmcheck.store import DomainError, FrozenModel
+from farmcheck.store import FrozenModel
 
 
 class ContextInput(FrozenModel):
@@ -59,11 +59,6 @@ def register_snapshot_routes(
             },
         )
 
-    @router.get("/api/agent/status")
-    def agent_status(ws: Annotated[str, Depends(workspace)]) -> AgentStatus:
-        _ = ws
-        return AgentStatus()
-
     @router.post("/api/agent/context")
     def agent_context(payload: ContextInput, ws: Annotated[str, Depends(workspace)]) -> View:
         state = store.read(ws)
@@ -74,12 +69,7 @@ def register_snapshot_routes(
             "context_id": snapshot.id, "snapshot_id": snapshot.id,
             "created_at": snapshot.created_at, "workspace_revision": snapshot.workspace_revision,
             "rule_version": RULE_VERSION, "read_only": True,
-            "agent_status": json_object(AgentStatus()),
+            "agent_status": json_object(configured_status()),
             "context": JSON_OBJECT.validate_json(snapshot.payload),
         })
 
-    @router.post("/api/agent/query")
-    def agent_query(ws: Annotated[str, Depends(workspace)]) -> View:
-        _ = ws
-        code = "disabled_by_owner"
-        raise DomainError(code, AgentStatus().message, 503)
