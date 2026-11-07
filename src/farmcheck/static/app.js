@@ -304,7 +304,6 @@
     const bone = (cls) => h("div", { class: "skeleton " + cls });
     return h("div", { class: "doc", "aria-hidden": "true" }, bone("sk-title"), bone("sk-sub"), bone("sk-photo"), h("div", { class: "cmp" }, bone("sk-cell"), bone("sk-cell")), bone("sk-line"));
   }
-  const propsSkeleton = () => [h("div", { class: "skeleton sk-card" }), h("div", { class: "skeleton sk-card tall" })];
   function updateTitle() {
     const part = S.view === "handover" ? "보고서" : S.view === "rules" ? "사용 안내" : S.detail ? recordName(S.detail) : scopeName();
     document.title = part + " — 팜체크";
@@ -320,7 +319,8 @@
     if (document.body.dataset.pane === "list") S.listScrollY = window.scrollY;
     S.id = id; S.detail = null;
     window.scrollTo(0, 0);
-    document.body.dataset.pane = "detail"; $("props").replaceChildren(...propsSkeleton()); renderMbar(); setMode(); renderList(); hideError();
+    if ($("sourceDialog").open) $("sourceDialog").close("nav");
+    document.body.dataset.pane = "detail"; renderMbar(); setMode(); renderList(); hideError();
     const loaded = await loadDetail();
     if (loaded) $("detail").focus({ preventScroll: true });
     return loaded;
@@ -476,16 +476,6 @@
   const weekField = (d) => (d.values || []).find((v) => v.field_path === "growth.growth_cycle");
   const currentWeek = (d) => d.comparison?.current_week ?? weekField(d)?.effective ?? d.growth_week;
   const modelWeek = (d) => d.comparison?.model_week ?? d.model?.growth_week;
-  const clock = (value) => {
-    const date = new Date(value);
-    return Number.isNaN(date.valueOf()) ? val(value) : new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
-  };
-  function eventSummary(e) {
-    const info = e.details || {};
-    if (e.type === "classify" || e.type === "recheck") return "";
-    const text = info.note || info.reason || info.evidence_note || info.next_action || (info.field ? fieldName(info.field) + " 적용값 " + val(info.value) : "");
-    return text.length > 90 ? text.slice(0, 90) + "..." : text;
-  }
   const classifierReady = () => S.classifier?.enabled === true && S.classifier?.status === "ready";
 
   function openLightbox(opener, src, alt, caption) {
@@ -519,7 +509,6 @@
       });
       photo.append(im, h("span", { class: "zoom-chip", "aria-hidden": "true", text: "크게 보기" }));
     }
-    photo.append(h("span", { class: "tagline", text: caption }));
     return photo;
   }
   function runClassify(d) {
@@ -527,49 +516,55 @@
     submitRecord(d.id, "classify", "/classify", { expected_revision: d.revision }, "AI 비교를 마쳤습니다. 원본과 비교해 판단하세요.");
   }
   const modelFailed = (d) => (d.model_attempt?.status === "failed" || d.model?.status === "failed") && d.model?.status !== "ok";
-  function failureCard(d) {
-    if (!modelFailed(d) || S.classifying.has(d.id)) return null;
-    const att = d.model_attempt || {}, raw = att.message || att.reason || att.error?.message || att.error || d.model?.message || "원인을 알 수 없습니다.";
+  const weekText = (w) => (w === null || w === undefined || w === "" ? "미확인" : w + "주");
+  function recordTitle(d) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d.time?.photo_parsed || "");
+    return !d.source?.synthetic && d.crop && m ? d.crop + " · " + m[1] + "." + m[2] + "." + m[3] : recordName(d);
+  }
+  /* One amber line: the most decision-relevant fact first, the rest counted as "외 N건". */
+  function hintCandidates(d) {
+    const out = [], c = d.comparison || {}, m = d.model || {};
     const busy = S.pendingWrites.has(d.id) || S.conflicts.has(d.id), canRun = realImage(d) && classifierReady();
-    return h("div", { class: "fail-card", role: "status" },
-      h("div", { class: "fail-text" }, h("strong", { text: "AI 비교에 실패했습니다" }), h("p", { text: typeof raw === "string" ? raw : JSON.stringify(raw) }),
-        h("p", { class: "help", text: "원본 기록은 그대로입니다. 다시 시도하거나 아래에서 직접 판단할 수 있습니다." })),
-      h("button", { type: "button", class: "btn", "data-classify": "", disabled: !canRun || busy, text: "다시 시도",
-        title: !realImage(d) ? "시연 예제는 실제 모델을 호출하지 않습니다" : !canRun ? "실험 모델에 연결되어 있어야 실행할 수 있습니다" : null, onclick: () => runClassify(d) }));
+    const retry = () => realImage(d) ? h("button", { type: "button", class: "btn mini", "data-classify": "", disabled: !canRun || busy, text: "다시 시도",
+      title: !canRun ? "실험 모델에 연결되어 있어야 실행할 수 있습니다" : null, onclick: () => runClassify(d) }) : null;
+    if (modelFailed(d)) { if (!S.classifying.has(d.id)) out.push({ text: "AI 비교에 실패했습니다. 원본 기록은 그대로입니다.", action: retry() }); }
+    else if (d.model_attempt?.status === "failed" && m.status === "ok") out.push({ text: "최근 AI 재시도가 실패해 이전 결과를 보여 줍니다.", action: retry() });
+    else if (["stale", "not_adopted"].includes(m.status)) out.push({ text: "AI 결과가 오래되었거나 채택되지 않아 비교하지 않았습니다." });
+    const warnings = photoWarnings(d), notTea = warnings.find((w) => w.code === "CROP_NOT_TEA"), lowConf = warnings.find((w) => w.code === "CROP_LOW_CONFIDENCE");
+    if (notTea) out.push({ text: qualityTitle(notTea) });
+    else if (m.status === "ok" && c.crop_matches === false) out.push({ text: "기록의 작물(" + val(d.crop) + ")과 AI가 분류한 작물(" + val(m.crop) + ")이 다릅니다." });
+    else if (lowConf) out.push({ text: qualityTitle(lowConf) + " · " + qualityEvidence(lowConf) });
+    const photo = warnings.filter((w) => PHOTO_CODES.has(w.code));
+    if (photo.length) out.push({ text: photo.map(qualityTitle).join(", ") + " · " + photo.map(qualityEvidence).join(", ") });
+    for (const k of ruleFlags(d)) out.push({ text: (L.rules[k.rule_id] || "규칙 확인") + (k.next_question ? " · " + k.next_question : " 필요") });
+    return out;
+  }
+  function hintNode(d) {
+    const list = hintCandidates(d), top = list[0], node = h("div", { id: "hintSlot", class: "hint", hidden: !top });
+    if (top) node.append(...[h("span", { class: "hint-text", text: top.text }), top.action, list.length > 1 ? h("span", { class: "hint-more", text: "외 " + (list.length - 1) + "건" }) : null].filter(Boolean));
+    return node;
+  }
+  const ruleFlags = (d) => matchedChecks(d).filter((check) => check.rule_id !== "MODEL_RECORD_DIFFERENCE");
+  function footNode(d) {
+    const flags = ruleFlags(d);
+    const status = !(d.checks || []).length ? "규칙 검사 결과 없음" : flags.length ? "규칙 검사 확인 필요 · " + flags.map((k) => L.rules[k.rule_id] || "규칙 확인").join(", ") : "규칙 검사 이상 없음";
+    return h("div", { class: "rv-foot" }, h("span", { text: status }),
+      h("button", { type: "button", id: "openSource", class: "text-button foot-link", "aria-haspopup": "dialog", text: "원문 · 이력 보기", onclick: () => openSource(d) }));
   }
   function compareNode(d) {
     const m = d.model || { status: "none" }, aiOk = m.status === "ok", w = weekField(d);
     const busy = S.pendingWrites.has(d.id) || S.conflicts.has(d.id), canRun = realImage(d) && classifierReady();
     const pending = S.classifying.has(d.id), failed = modelFailed(d);
-    const ai = h("div", { class: "cell ai", "aria-busy": String(pending) }, h("div", { class: "k", text: realImage(d) ? "03: AI 예측" : "03: 시연용 예측" }));
-    if (aiOk) ai.append(h("div", { class: "v", text: val(modelWeek(d)) + "주" }), h("div", { class: "m", text: val(m.crop) + " · " + (realImage(d) ? "실험 모델" : "시연용 모델 결과") }));
-    else if (pending) ai.append(h("div", { class: "v idle-v", text: "AI 비교 중…" }), h("div", { class: "skeleton sk-line" }), h("div", { class: "m", text: "사진을 실험 모델로 보내 예측을 받고 있습니다." }));
-    else {
-      ai.append(...[h("div", { class: "v idle-v", text: failed ? "결과 없음" : "비교 전" }), h("div", { class: "m", text: L.model[m.status] || "분류 전" }),
-        realImage(d) && !failed ? h("button", { type: "button", class: "btn", "data-classify": "", disabled: !canRun || busy, text: busy ? "요청 처리 중" : "AI로 사진 비교", onclick: () => runClassify(d) }) : null,
-        realImage(d) && !failed ? h("p", { class: "help", text: canRun ? "클릭하면 사진을 실험 모델로 전송합니다. 1회 예측, 자동 재시도 없음." : "실험 모델에 연결되어 있어야 실행할 수 있습니다." }) : null].filter(Boolean));
-    }
+    const ai = h("div", { class: "cell ai" + (aiOk ? " ok" : ""), "aria-busy": String(pending) }, h("div", { class: "k", text: "AI 예측" }));
+    if (aiOk) ai.append(h("div", { class: "v", text: weekText(modelWeek(d)) }));
+    else if (pending) ai.append(h("div", { class: "v idle-v", text: "AI 비교 중…" }), h("div", { class: "skeleton sk-line" }));
+    else ai.append(...[h("div", { class: "v idle-v", text: failed ? "결과 없음" : "AI 비교 전" }),
+      realImage(d) && !failed ? h("button", { type: "button", class: "btn", "data-classify": "", disabled: !canRun || busy, text: busy ? "요청 처리 중" : "AI로 사진 비교", onclick: () => runClassify(d) }) : null,
+      realImage(d) && !failed ? h("p", { class: "help", text: canRun ? "클릭하면 사진을 실험 모델로 전송합니다. 1회 예측, 자동 재시도 없음." : "실험 모델에 연결되어 있어야 실행할 수 있습니다." }) : null,
+      !realImage(d) ? h("p", { class: "help", text: "시연 예제는 실제 모델을 호출하지 않습니다" }) : null].filter(Boolean));
     return h("div", { class: "cmp", id: "modelComparison", tabindex: "-1" },
-      h("div", { class: "cell" }, h("div", { class: "k", text: "02: 원본 기록" }), h("div", { class: "v", text: val(currentWeek(d)) + "주" }), h("div", { class: "m", text: val(d.crop) + (w?.corrected ? " · 보정 적용" : " · JSON 라벨") })), ai);
-  }
-  function noteNode(d) {
-    const c = d.comparison || {}, notes = [];
-    if (d.model?.status === "ok" && c.status === "different") notes.push(h("p", { class: "note", text: c.crop_matches === false ? "기록의 작물과 AI가 분류한 작물이 다릅니다. 원본 JSON은 바뀌지 않습니다." : "원본 " + val(c.current_week) + "주와 AI " + val(c.model_week) + "주가 다릅니다. 어느 쪽이 맞는지 판단이 필요하며, 원본 JSON은 바뀌지 않습니다." }));
-    else if (d.model?.status === "ok" && c.status === "equal") notes.push(h("p", { class: "note calm", text: "원본과 AI 주차가 같습니다. 정답을 보장하지는 않습니다." }));
-    else if (["stale", "not_adopted"].includes(d.model?.status)) notes.push(h("p", { class: "note", text: "AI 결과가 오래되었거나 채택되지 않아 비교하지 않았습니다." }));
-    if (d.model_attempt?.status === "failed" && d.model?.status === "ok") notes.push(h("p", { class: "note", role: "status", text: "최근 재시도는 실패했습니다. 위 비교는 이전 성공 결과를 사용합니다." }));
-    return notes;
-  }
-  function photoTime(value) {
-    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value || "");
-    return m ? m[1] + "." + m[2] + "." + m[3] + " " + m[4] + ":" + m[5] : val(value);
-  }
-  function timelineNode(d) {
-    const events = (d.history || []).slice(-6);
-    return h("section", { class: "act-wrap" }, h("p", { class: "k", text: "활동 기록" }),
-      events.length ? h("ol", { class: "act" }, events.map((e) => h("li", { class: "ev" }, h("i", { "aria-hidden": "true" }),
-        h("span", { text: (L.history[e.type] || e.type) + (eventSummary(e) ? " · " + eventSummary(e) : "") }), h("time", { text: clock(e.at) }))))
-        : h("p", { class: "help", text: "아직 기록된 변경이 없습니다." }));
+      h("div", { class: "cell" }, h("div", { class: "k", text: "원본 기록" }), h("div", { class: "v", text: weekText(currentWeek(d)) }), w?.corrected ? h("div", { class: "m", text: "보정 적용" }) : null),
+      h("span", { class: "vs-sep", "aria-hidden": "true", text: "vs" }), ai);
   }
   function valuesCard(d) {
     const t = d.time || {}, img = d.source?.image || {};
@@ -597,16 +592,19 @@
     const raw = m.model_identity, ident = raw && typeof raw === "object" ? raw : raw ? { name: String(raw) } : {};
     const conn = real && aiOk ? S.classifier?.model || {} : {};
     const name = ident.name || ident.model_name || conn.name, version = ident.version || ident.model_version || conn.version;
+    const att = d.model_attempt || {}, attRaw = att.status === "failed" ? att.message || att.reason || att.error?.message || att.error : null;
     const rows = [
       ["상태", L.model[m.status] || val(m.status)], ["실행 ID", m.run_id], ["작물", m.crop], ["주차", m.growth_week != null ? m.growth_week + "주" : null],
       ["모델 이름·버전", name ? name + (version ? " v" + version : "") : null], ["서빙 ID", ident.serving_id || conn.serving_id],
       ["이미지 SHA-256", m.image_sha256 || (aiOk ? s.image_sha256 : null)], ["JSON SHA-256", m.json_sha256 || (aiOk ? s.json_sha256 : null)],
       ["실행 유형", !aiOk && m.status !== "failed" ? null : real ? "실제 추론" : "시연 결과 (실제 모델 호출 아님)"],
       ["소요 시간", m.elapsed_ms != null ? m.elapsed_ms + " ms" : null], ["요청 ID", m.request_id],
-      ["기준 버전", m.based_on_revision != null ? "기록 " + m.based_on_revision + (m.based_on_data_revision != null ? " · 데이터 " + m.based_on_data_revision : "") : null]]
+      ["기준 버전", m.based_on_revision != null ? "기록 " + m.based_on_revision + (m.based_on_data_revision != null ? " · 데이터 " + m.based_on_data_revision : "") : null],
+      ["기록 작물과 비교", d.comparison?.crop_matches === true ? "일치" : d.comparison?.crop_matches === false ? "불일치" : null],
+      ["최근 요청 실패", attRaw ? (typeof attRaw === "string" ? attRaw : JSON.stringify(attRaw)) : null]]
       .filter(([, value]) => value !== null && value !== undefined && value !== "");
     return h("div", { class: "values-block" },
-      h("p", { class: "help", text: "분류 점수는 보정된 정답 확률이 아닙니다. 자료 출처와 실행 유형은 별개입니다." }),
+      h("p", { class: "help", text: "AI 예측은 정답을 보장하지 않습니다. 분류 점수는 보정된 정답 확률이 아닙니다. 자료 출처와 실행 유형은 별개입니다." }),
       h("dl", { class: "kv" }, rows.flatMap(([key, value]) => [h("dt", { text: key }), h("dd", { class: /ID|SHA/.test(key) ? "mono" : "", text: String(value) })])),
       m.message ? h("p", { class: "help", text: m.message }) : null,
       S.classifier ? h("details", {}, h("summary", { text: "기술 정보" }), h("p", { class: "help", text: "모델 연결 점검 응답입니다." }), h("pre", { class: "json", text: JSON.stringify(S.classifier, null, 2) })) : null);
@@ -621,10 +619,10 @@
   function renderDetail() {
     const d = S.detail, box = $("detail"); box.replaceChildren(); setMode(); updateTitle();
     box.setAttribute("aria-busy", "false");
-    if (!d) { box.append(backBtn(), idlePanel()); $("props").replaceChildren(); renderMbar(); return; }
+    if (!d) { box.append(backBtn(), idlePanel()); renderMbar(); return; }
     const pos = recordPosition();
     box.append(backBtn(),
-      h("div", { class: "bar" }, h("span", { class: "crumb" }, scopeName() + " / ", h("b", { text: recordName(d) })),
+      h("div", { class: "bar" }, h("span", { class: "crumb" }, scopeName() + " / ", h("h2", { text: recordTitle(d) })),
         h("span", { class: "bar-end" },
           h("span", { class: "stepper", role: "group", "aria-label": "기록 이동" },
             h("button", { type: "button", class: "btn mini", id: "prevRecord", disabled: !pos || pos.first, title: "이전 기록 (K)", text: "‹ 이전", onclick: () => stepRecord(-1) }),
@@ -632,15 +630,9 @@
             h("button", { type: "button", class: "btn mini", id: "nextRecord", disabled: !pos || pos.last, title: "다음 기록 (J)", text: "다음 ›", onclick: () => stepRecord(1) })),
           h("button", { type: "button", class: "btn mini", text: "이 기록 보고서", onclick: () => { S.handoverScope = "current"; setView("handover"); } }))),
       h("div", { class: "doc" },
-        h("h2", { text: recordName(d) }),
-        h("p", { class: "sub", text: (d.source?.synthetic ? "합성 시연 자료" : photoTime(d.time?.photo_parsed) + " 촬영 · " + (L.origin[d.origin] || val(d.origin))) + " · 원본 JSON 보존" }),
-        photoNode(d), qualityNode(d), compareNode(d), failureCard(d), ...noteNode(d), timelineNode(d),
-        h("div", { class: "folds" },
-          h("p", { class: "k", text: "04 · Evidence" }), h("p", { class: "help", text: "판단의 근거가 되는 원본 값, 규칙 검사, 비교 기록입니다. 필요할 때 펼쳐 보세요." }),
-          foldSection(valuesCard(d), "원본 환경 기록과 단위"), foldSection(checksCard(d), "규칙 검사와 확인할 이유"),
-          foldSection(groupCard(d), "같은 원본 값의 사진 묶음 · 독립 측정 아님"), foldSection(peersCard(d), "다른 기록과 비교"),
-          sourceCard(d), foldSection(historyCard(d), "변경 이력 전체"), foldSection(modelEvidence(d), "AI 실행 근거"))));
-    renderProps();
+        h("div", { class: "rv" }, photoNode(d), h("div", { class: "rv-side" }, compareNode(d), hintNode(d), h("div", { id: "decisionSlot", class: "decision-slot" }))),
+        footNode(d)));
+    renderDecision();
   }
 
   /* ---------- photo check: advisory hints, never a verdict (docs/quality-checks-eval.md) ---------- */
@@ -663,18 +655,11 @@
   }
   function photoWarnings(d) {
     const q = S.quality.get(d.id);
-    if (!q?.metrics) return [];
+    if (!q?.metrics || !realImage(d)) return [];
     const m = d.model;
     // A missing score cannot trigger CROP_LOW_CONFIDENCE; CROP_NOT_TEA only needs the crop name.
     const modelResult = m?.status === "ok" && m.crop ? { crop: { name_ko: m.crop, confidence: Number(m.crop_confidence ?? m.confidence ?? 1) } } : undefined;
     return window.FarmQuality.assess(q.metrics, modelResult);
-  }
-  function qualityNode(d) {
-    const warnings = photoWarnings(d), card = h("section", { id: "qualityCard", class: "q-card", hidden: !warnings.length, "aria-label": "사진 확인 권장" });
-    if (warnings.length) card.append(h("p", { class: "k", text: "사진 확인 권장" }),
-      h("ul", { class: "q-list" }, warnings.map((w) => h("li", { class: "q-row" }, h("span", { class: "q-title", text: qualityTitle(w) }), h("code", { class: "q-evidence", text: qualityEvidence(w) })))),
-      h("p", { class: "help", text: "확인 권장 표시이며 라벨 오류 판정이 아닙니다" }));
-    return card;
   }
   function measurePhoto(d, img) {
     if (S.quality.has(d.id)) return;
@@ -685,8 +670,8 @@
     if (S.detail?.id !== d.id) return;
     const warnings = photoWarnings(S.detail);
     if (!warnings.length) return;
-    $("qualityCard")?.replaceWith(qualityNode(S.detail));
-    if (decisionDraft(d.id).mode === "hold") renderProps();
+    $("hintSlot")?.replaceWith(hintNode(S.detail));
+    if (decisionDraft(d.id).mode === "hold") renderDecision();
     announce("사진 확인 권장 " + warnings.length + "건");
   }
   const suggestsPhotoChip = (d, dr, chip) => chip === PHOTO_CHIP && dr.chip !== chip && photoWarnings(d).some((w) => PHOTO_CODES.has(w.code));
@@ -710,27 +695,19 @@
   }
   function feedbackNode(id) {
     const feedback = S.feedback.get(id);
-    if (!feedback) return null;
+    if (!feedback || feedback.quiet) return null;
     return h("div", { id: "recordFeedback", class: "feedback " + feedback.kind, tabIndex: -1, role: "group", "aria-label": "저장 결과" },
       h("p", { text: feedback.text }), feedback.recover ? h("button", { type: "button", class: "btn", text: "최신 기록 불러오기 · 초안 유지", onclick: () => loadDetail({ recovering: true }) }) : null);
   }
-  function renderProps() {
-    const box = $("props"), d = S.detail; box.replaceChildren(); renderMbar();
+  function renderDecision() {
+    const box = $("decisionSlot"), d = S.detail; renderMbar();
+    if (!box) return;
+    box.replaceChildren();
     if (!d) return;
-    const st = detailState(d), c = d.comparison || {}, m = d.model || {}, aiOk = m.status === "ok";
     const advanced = h("details", { class: "advanced" }, h("summary", { text: "상세 옵션 · 직접 기록" }), h("p", { class: "help", text: "대부분은 위 질문으로 충분합니다. 검토 메모, 값 보정, 재검사, 해소 근거를 직접 기록할 때만 사용하세요." }), actionsCard(d));
     advanced.open = !!S.advOpen.get(d.id);
     advanced.addEventListener("toggle", () => S.advOpen.set(d.id, advanced.open));
-    box.append(...[feedbackNode(d.id),
-      h("dl", { class: "card prop-list" },
-        prop("상태", h("span", { class: "pill " + st }, h("span", { class: "st " + st, "aria-hidden": "true" }), STATE_TEXT[st])),
-        prop("작물", val(d.crop), aiOk && c.crop_matches === true ? h("span", { class: "dim", text: " · 일치" }) : null, aiOk && c.crop_matches === false ? h("span", { class: "dim", text: " · 불일치" }) : null),
-        prop("원본 주차", val(currentWeek(d)) + "주"),
-        prop("AI 주차", aiOk ? h("strong", { class: "ai-week", text: val(modelWeek(d)) + "주" }) : "비교 전")),
-      h("section", { class: "scores" }, h("p", { class: "k", text: "분류 점수 · 정답 확률 아님" }),
-        h("dl", { class: "card prop-list" }, scoreRow("작물", aiOk ? (m.crop_confidence ?? m.confidence) : null), scoreRow("주차", aiOk ? m.growth_confidence : null))),
-      decisionPanel(d), advanced,
-      h("p", { class: "key-hint", text: "1·2·3 판단 · Enter 기록 · J/K 이동" })].filter(Boolean));
+    box.append(...[feedbackNode(d.id), decisionPanel(d), advanced].filter(Boolean));
   }
 
   /* ---------- decision panel ---------- */
@@ -774,11 +751,11 @@
     $("commitDecision").disabled = !plan.ok || S.pendingWrites.has(d.id) || S.conflicts.has(d.id);
   }
   function setDecisionMode(id, mode) {
-    const dr = decisionDraft(id); dr.mode = mode; dr.dirty = true; renderProps();
+    const dr = decisionDraft(id); dr.mode = mode; dr.dirty = true; renderDecision();
     (mode === "hold" ? $("hold-chip-0") : $("commitDecision"))?.focus({ preventScroll: true });
   }
   function cancelDecision(id) {
-    const dr = decisionDraft(id), mode = dr.mode; dr.mode = null; renderProps(); $("decide-" + mode)?.focus({ preventScroll: true });
+    const dr = decisionDraft(id), mode = dr.mode; dr.mode = null; renderDecision(); $("decide-" + mode)?.focus({ preventScroll: true });
   }
   function holdFields(d, dr) {
     const id = d.id;
@@ -788,7 +765,7 @@
     next.addEventListener("input", () => { dr.next = next.value; dr.nextTouched = true; dr.dirty = true; updateConfirm(d, dr); });
     return h("div", { class: "hold-fields" },
       h("div", { class: "chips", role: "group", "aria-label": "보류 사유" }, HOLD_CHIPS.map(([chip], index) => { const hint = suggestsPhotoChip(d, dr, chip); return h("button", { type: "button", id: "hold-chip-" + index, class: "chip" + (hint ? " suggested" : ""), "aria-pressed": String(dr.chip === chip), title: hint ? "사진 확인 권장 표시가 있어 추천합니다" : null,
-        onclick: () => { dr.chip = dr.chip === chip ? "" : chip; dr.dirty = true; renderProps(); $("hold-chip-" + index)?.focus({ preventScroll: true }); } }, chip, hint ? h("span", { class: "chip-hint", text: " · 추천" }) : null); })),
+        onclick: () => { dr.chip = dr.chip === chip ? "" : chip; dr.dirty = true; renderDecision(); $("hold-chip-" + index)?.focus({ preventScroll: true }); } }, chip, hint ? h("span", { class: "chip-hint", text: " · 추천" }) : null); })),
       h("label", { class: "field" }, h("span", { text: "사유" }), free),
       h("label", { class: "field" }, h("span", { text: "다음 담당자가 확인할 일" }), next));
   }
@@ -806,66 +783,69 @@
     return parts.join(" · ");
   }
   function decisionChoices(d) {
-    const cmp = d.comparison?.status;
-    if (cmp === "equal") return [{ mode: "original", label: "일치 확인", enabled: true }];
+    const cmp = d.comparison?.status, cur = weekText(currentWeek(d));
+    if (cmp === "equal") return [{ mode: "original", label: "일치 확인 (" + cur + ")", short: "일치 확인", enabled: true }];
     const aiEnabled = d.model?.status === "ok" && cmp === "different", demoNoAi = !realImage(d) && d.model?.status !== "ok";
-    return [{ mode: "original", label: "원본이 맞음", enabled: true },
-      { mode: "ai", label: "AI가 맞음", enabled: aiEnabled, title: aiEnabled ? null : demoNoAi ? "시연 예제는 실제 모델을 호출하지 않습니다" : "AI 결과가 있고 주차가 다를 때만 선택할 수 있습니다" },
-      { mode: "hold", label: "모르겠음 (보류)", enabled: true }];
+    return [{ mode: "original", label: "원본이 맞음 (" + cur + ")", short: "원본이 맞음", enabled: true },
+      { mode: "ai", label: "AI가 맞음" + (aiEnabled ? " (" + weekText(modelWeek(d)) + ")" : ""), short: "AI가 맞음", enabled: aiEnabled, title: aiEnabled ? null : demoNoAi ? "시연 예제는 실제 모델을 호출하지 않습니다" : "AI 결과가 있고 주차가 다를 때만 선택할 수 있습니다" },
+      { mode: "hold", label: "모르겠음 (보류)", short: "모르겠음", enabled: true }];
+  }
+  let mbarObserver = null;
+  function watchDecisionPanel(box) {
+    mbarObserver?.disconnect();
+    requestAnimationFrame(() => {
+      const panel = $("decisionPanel");
+      if (!panel || box.hidden) return;
+      mbarObserver = new IntersectionObserver(([entry]) => box.classList.toggle("panel-visible", entry.isIntersecting));
+      mbarObserver.observe(panel);
+    });
   }
   function renderMbar() {
     const box = $("mbar"), d = S.detail;
     box.replaceChildren();
+    box.classList.remove("panel-visible");
     if (!d || S.view !== "records") { box.hidden = true; return; }
     const dr = decisionDraft(d.id);
     if ((isJudged(d) && !dr.changing) || dr.mode) { box.hidden = true; return; }
     const locked = S.pendingWrites.has(d.id) || S.conflicts.has(d.id);
-    for (const c of decisionChoices(d)) box.append(h("button", { type: "button", class: "btn", disabled: !c.enabled || locked, title: c.title || null, text: c.label.replace(" (보류)", ""),
+    for (const c of decisionChoices(d)) box.append(h("button", { type: "button", class: "btn", disabled: !c.enabled || locked, title: c.title || null, text: c.short,
       onclick: () => { setDecisionMode(d.id, c.mode); $("decisionPanel")?.scrollIntoView({ block: "start", behavior: "smooth" }); } }));
     box.hidden = false;
+    watchDecisionPanel(box);
   }
   function decisionPanel(d) {
     const id = d.id, dr = decisionDraft(id), busy = S.pendingWrites.has(id) || S.conflicts.has(id);
     const judged = isJudged(d), changing = judged && dr.changing, equal = d.comparison?.status === "equal";
     const progress = h("p", { id: "decisionProgress", class: "write-progress", hidden: !S.pendingWrites.has(id), text: "기록하는 중입니다. 중복 저장을 막기 위해 이 기록의 입력을 잠시 잠급니다." });
     if (judged && !changing) {
-      return h("section", { class: "decision", id: "decisionPanel", "aria-labelledby": "decisionTitle" },
+      return h("section", { class: "decision", id: "decisionPanel", tabindex: "-1", "aria-labelledby": "decisionTitle" },
         h("h3", { id: "decisionTitle", text: "현재 판단" }),
         h("p", { class: "judged " + (d.review.resolution_state === "held" ? "hold" : "done"), text: judgedSummary(d) }),
         h("button", { type: "button", id: "changeDecision", class: "btn", disabled: busy, text: "판단 바꾸기",
-          onclick: () => { dr.changing = true; renderProps(); $("decide-original")?.focus({ preventScroll: true }); } }),
+          onclick: () => { dr.changing = true; renderDecision(); $("decide-original")?.focus({ preventScroll: true }); } }),
         progress);
     }
-    const others = matchedChecks(d).filter((check) => check.rule_id !== "MODEL_RECORD_DIFFERENCE"), choices = decisionChoices(d);
-    const demoNoAi = !realImage(d) && d.model?.status !== "ok", aiEnabled = choices.some((c) => c.mode === "ai" && c.enabled);
-    const choice = (c) => h("button", { type: "button", id: "decide-" + c.mode, class: "btn choice", "aria-pressed": String(dr.mode === c.mode), disabled: !c.enabled, title: c.title || null, text: c.label, onclick: () => setDecisionMode(id, c.mode) });
-    const note = h("textarea", { id: "decisionNote", maxLength: 2000, rows: 3, placeholder: "판단 이유를 남기면 기록에 함께 저장됩니다.", value: dr.note });
+    const choices = decisionChoices(d);
+    const choice = (c, index) => h("button", { type: "button", id: "decide-" + c.mode, class: "btn choice", "aria-pressed": String(dr.mode === c.mode), "aria-keyshortcuts": String(index + 1), disabled: !c.enabled, title: c.title || null, onclick: () => setDecisionMode(id, c.mode) },
+      h("kbd", { class: "kh", "aria-hidden": "true", text: String(index + 1) }), c.label);
+    const note = h("textarea", { id: "decisionNote", maxLength: 2000, rows: 2, placeholder: "판단 이유를 남기면 기록에 함께 저장됩니다.", value: dr.note });
     note.addEventListener("input", () => { markDraft(dr, "note", note.value); updateConfirm(d, dr); });
     const plan = decisionPlan(d, dr);
     return h("section", { class: "decision", id: "decisionPanel", "aria-labelledby": "decisionTitle" },
       h("h3", { id: "decisionTitle", text: changing ? "판단 바꾸기" : equal ? "일치 확인" : "어느 쪽이 맞나요?" }),
       changing ? h("p", { class: "help", text: "현재: " + judgedSummary(d) }) : null,
-      others.length ? h("div", { class: "also" }, h("p", { class: "k", text: "함께 확인할 항목" }),
-        h("ul", {}, others.map((check) => h("li", {}, h("strong", { text: L.rules[check.rule_id] || check.rule_id }), check.next_question ? h("span", { class: "dim", text: " · " + check.next_question }) : null))),
-        h("p", { class: "help", text: "판단을 기록하면 이 항목도 함께 확인한 것으로 남습니다." })) : null,
       h("fieldset", { class: "workflow-fields decision-fields", disabled: busy },
         h("legend", { class: "sr-only", text: "판단 선택" }),
-        h("label", { class: "field" }, h("span", { text: "메모 (선택)" }), note),
         h("div", { class: "choices" }, choices.map(choice)),
-        !equal && !aiEnabled ? h("p", { class: "help", text: demoNoAi ? "시연 예제는 실제 모델을 호출하지 않습니다" : "AI가 맞음은 AI 결과가 있고 주차가 다를 때만 선택할 수 있습니다." }) : null,
         dr.mode === "hold" ? holdFields(d, dr) : null,
         dr.mode ? h("div", { class: "confirm", id: "confirmBlock", role: "group", "aria-label": "기록 내용 확인" },
+          h("label", { class: "field" }, h("span", { text: "메모 (선택)" }), note),
           h("p", { class: "k", text: "이렇게 기록합니다" }), h("p", { id: "confirmText", class: "confirm-text", text: plan.text }), h("p", { id: "confirmHint", class: "field-help", text: plan.blocker }),
           h("div", { class: "confirm-actions" },
             h("button", { type: "button", id: "commitDecision", class: "btn tea", disabled: !plan.ok, text: "기록하기", onclick: () => commitDecision(id) }),
             h("button", { type: "button", class: "btn", text: "취소", onclick: () => cancelDecision(id) }))) : null,
-        changing && !dr.mode ? h("button", { type: "button", class: "btn link", text: "그대로 두기", onclick: () => { dr.changing = false; renderProps(); } }) : null),
+        changing && !dr.mode ? h("button", { type: "button", class: "btn link", text: "그대로 두기", onclick: () => { dr.changing = false; renderDecision(); } }) : null),
       progress);
-  }
-
-  function foldSection(node, title) {
-    const disclosure = h("details", { class: "evidence-section" }, h("summary", { text: title }));
-    node.classList.remove("card"); disclosure.append(node); return disclosure;
   }
 
   function checksCard(d) {
@@ -888,8 +868,7 @@
 
   function sourceCard(d) {
     const s = d.source || {};
-    return h("details", { class: "card source-details", id: "sourceEvidence" },
-      h("summary", {}, h("span", { class: "section-title", text: "원문과 식별정보" }), h("span", { class: "help", text: "원본 JSON · 해시 · 자료 출처" })),
+    return h("section", { class: "src-sec", id: "sourceEvidence" }, h("h3", { text: "원문과 식별정보" }),
       h("dl", { class: "kv" },
         h("dt", { text: "기록 ID" }), h("dd", {}, identifier(d.id)),
         h("dt", { text: "자료 종류" }), h("dd", {}, originBadge(d.origin)),
@@ -940,6 +919,29 @@
     }
     c.append(h("p", { class: "help", text: d.peers_note || "비교는 정상 범위나 생육 추세를 뜻하지 않습니다." }));
     return c;
+  }
+
+  /* Everything the main view leaves out, as plain headed sections (details are opened). */
+  function sourceBody(d) {
+    const m = d.model || {}, aiOk = m.status === "ok", warnings = photoWarnings(d);
+    const titled = (title, node) => h("section", { class: "src-sec" }, h("h3", { text: title }), node);
+    const plain = (card) => { card.classList.remove("card"); card.classList.add("src-sec"); return card; };
+    const body = h("div", { class: "src-body" },
+      h("p", { class: "help", text: "판단에 쓰이지 않는 원문, 규칙 검사, 이력입니다. 원본 JSON은 바뀌지 않고 그대로 보존됩니다." }),
+      warnings.length ? titled("사진 확인 권장", h("div", {}, h("ul", { class: "q-list" }, warnings.map((w) => h("li", { class: "q-row" }, h("span", { class: "q-title", text: qualityTitle(w) }), h("code", { class: "q-evidence", text: qualityEvidence(w) })))),
+        h("p", { class: "help", text: "확인 권장 표시이며 라벨 오류 판정이 아닙니다" }))) : null,
+      plain(checksCard(d)), titled("원본 환경 기록과 단위", valuesCard(d)), plain(groupCard(d)), plain(peersCard(d)), sourceCard(d), plain(historyCard(d)),
+      titled("분류 점수 · 정답 확률 아님", h("dl", { class: "prop-list" }, scoreRow("작물", aiOk ? (m.crop_confidence ?? m.confidence) : null), scoreRow("주차", aiOk ? m.growth_confidence : null))),
+      titled("AI 실행 근거와 기술 정보", modelEvidence(d)));
+    body.querySelectorAll("details").forEach((node) => { node.open = true; });
+    return body;
+  }
+  function openSource(d) {
+    const dialog = $("sourceDialog");
+    dialog.returnValue = "";
+    $("sourceTitle").textContent = "원문 · 이력 · " + recordTitle(d);
+    $("sourceBody").replaceChildren(sourceBody(d));
+    dialog.showModal(); dialog.scrollTo(0, 0); $("sourceClose").focus();
   }
 
   function realImage(d) {
@@ -1029,8 +1031,8 @@
   function renderBusy(id) {
     if (S.id !== id) return;
     const busy = S.pendingWrites.has(id), locked = busy || S.conflicts.has(id);
-    document.querySelectorAll("#props fieldset.workflow-fields").forEach((fieldset) => { fieldset.disabled = locked; });
-    document.querySelectorAll("#props [role='tab']").forEach((tab) => { tab.disabled = busy; });
+    document.querySelectorAll("#decisionSlot fieldset.workflow-fields").forEach((fieldset) => { fieldset.disabled = locked; });
+    document.querySelectorAll("#decisionSlot [role='tab']").forEach((tab) => { tab.disabled = busy; });
     document.querySelectorAll("[data-classify]").forEach((button) => { button.disabled = locked || !realImage(S.detail) || !classifierReady(); });
     for (const progress of [$("writeProgress"), $("decisionProgress")]) if (progress) progress.hidden = !busy;
   }
@@ -1044,7 +1046,7 @@
       const result = await work((detail) => { latest = detail; });
       if (opts.clear) S.drafts.get(id)?.delete(opts.clear);
       S.conflicts.delete(id);
-      S.feedback.set(id, { kind: result.kind || "success", text: result.message, recover: !!result.recover });
+      S.feedback.set(id, { kind: result.kind || "success", text: result.message, recover: !!result.recover, quiet: !!result.quiet });
       if (opts.nextAction) S.activeActions.set(id, opts.nextAction);
       applyDetail(result.detail); announce(result.message);
       ok = result.kind !== "error"; advancing = ok && opts.advance !== undefined;
@@ -1060,7 +1062,7 @@
       S.pendingWrites.delete(id);
       if (!advancing && S.id === id && S.detail) {
         renderDetail();
-        const target = S.feedback.get(id)?.kind !== "error" && opts.focusAi ? $("modelComparison") : $("recordFeedback");
+        const target = S.feedback.get(id)?.kind !== "error" && opts.focusAi ? $("modelComparison") : ($("recordFeedback") || $("decisionPanel"));
         if (S.view === "records" && target) { target.focus({ preventScroll: true }); target.scrollIntoView({ block: "nearest" }); }
       }
     }
@@ -1081,7 +1083,7 @@
         catch (error) { if (!(error instanceof ApiError)) throw error; recheckFailed = true; }
       }
       const text = recheckFailed ? "저장은 완료됐지만 검사 갱신에 실패했습니다. AI를 다시 실행하지 말고, 최신 기록을 불러온 뒤 검사만 갱신하세요." : modelFailed ? "최근 AI 요청이 실패했습니다. 이전 성공 결과가 있다면 그대로 유지합니다." : message;
-      return { detail, message: text, kind: modelFailed || recheckFailed ? "error" : "success", recover: recheckFailed };
+      return { detail, message: text, kind: modelFailed || recheckFailed ? "error" : "success", recover: recheckFailed, quiet: action === "classify" && !modelFailed && !recheckFailed };
     } finally { S.classifying.delete(id); } }, { clear: action, nextAction, focusAi: ["classify", "correction"].includes(action) });
   }
 
@@ -1113,18 +1115,18 @@
       let detail = d;
       if (mode === "hold") {
         detail = await postRec(id, "/review", { expected_revision: d.revision, action: "hold", note: [holdReason(dr), note].filter(Boolean).join(" · "), next_action: holdNext(dr) });
-        return { detail, message: "보류로 기록했습니다. 사유와 다음 확인 항목이 보고서에 포함됩니다." };
+        return { detail, message: "보류로 기록했습니다. 사유와 다음 확인 항목이 보고서에 포함됩니다.", quiet: true };
       }
       if (mode === "ai") {
         if (!(d.model?.status === "ok" && d.comparison?.status === "different") || mw == null) throw new ApiError(422, { code: "ai_unavailable", message: "AI 결과가 없거나 주차가 같아 AI 기준으로 보정할 수 없습니다." });
         detail = await postRec(id, "/corrections", { expected_revision: d.revision, field: "growth.growth_cycle", value: String(mw), reason: note || "사진 기준 AI 주차가 맞다고 판단" }); track(detail);
         detail = await postRec(id, "/recheck", { expected_revision: detail.revision }); track(detail);
         detail = await resolve(detail, note || "AI " + mw + "주가 맞다고 판단해 주차를 보정");
-        return { detail, message: "주차를 " + cur + "주에서 " + mw + "주로 보정하고 해소로 기록했습니다. 원본 JSON은 바뀌지 않았습니다." };
+        return { detail, message: "주차를 " + cur + "주에서 " + mw + "주로 보정하고 해소로 기록했습니다. 원본 JSON은 바뀌지 않았습니다.", quiet: true };
       }
       if (d.review?.recheck_needed) { announce("현재 값 기준으로 검사를 갱신하는 중입니다."); detail = await postRec(id, "/recheck", { expected_revision: d.revision }); track(detail); }
       detail = await resolve(detail, note || (equal ? "원본 " + cur + "주와 AI 예측이 일치함을 확인" : "원본 " + cur + "주 기록이 맞다고 판단"));
-      return { detail, message: "원본 " + cur + "주 유지로 해소 기록했습니다." };
+      return { detail, message: "원본 " + cur + "주 유지로 해소 기록했습니다.", quiet: true };
     }, judged ? { clear: "decision" } : { clear: "decision", advance: nextPendingId(id) });
   }
   async function send(button, fn) {
@@ -1648,7 +1650,7 @@
     window.addEventListener("drop", (event) => { if (hasFiles(event)) { event.preventDefault(); openImport([...event.dataTransfer.files]); } });
     document.addEventListener("keydown", (event) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
-      if (S.view !== "records" || $("importDialog").open || $("lightbox").open) return;
+      if (S.view !== "records" || $("importDialog").open || $("lightbox").open || $("sourceDialog").open) return;
       const target = event.target;
       if (target instanceof Element && target.matches("input:not([type=checkbox]):not([type=radio]):not([type=button]), textarea, select, [contenteditable]")) return;
       if (event.code === "KeyJ" || event.code === "KeyK") { event.preventDefault(); stepRecord(event.code === "KeyJ" ? 1 : -1); return; }
@@ -1665,6 +1667,9 @@
         if (commit && !commit.disabled && (selectedChip || !(target instanceof Element && target.closest("button, a, summary, [role=button], [role=tab]")))) { event.preventDefault(); commitDecision(d.id); }
       } else if (event.key === "Escape" && dr.mode && $("confirmBlock")) { event.preventDefault(); cancelDecision(d.id); }
     });
+    $("sourceClose").addEventListener("click", () => $("sourceDialog").close("done"));
+    $("sourceDialog").addEventListener("click", (event) => { if (event.target === $("sourceDialog")) $("sourceDialog").close("done"); });
+    $("sourceDialog").addEventListener("close", () => { if ($("sourceDialog").returnValue !== "nav") $("openSource")?.focus(); });
     $("lbZoom").addEventListener("click", toggleLightboxZoom);
     $("lbImg").addEventListener("click", toggleLightboxZoom);
     $("lbClose").addEventListener("click", () => $("lightbox").close());
