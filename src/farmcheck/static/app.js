@@ -24,7 +24,7 @@
     boot: null, scope: "actual", filter: "all", q: "", page: 1, pageSize: 25, list: null,
     id: null, detail: null, picked: new Set(), drafts: new Map(), handover: null, view: "records",
     pendingWrites: new Set(), conflicts: new Set(), feedback: new Map(), activeActions: new Map(),
-    listRequest: 0, detailRequest: 0, bootRequest: 0, listScrollY: 0, handoverScope: "current",
+    quality: new Map(), listRequest: 0, detailRequest: 0, bootRequest: 0, listScrollY: 0, handoverScope: "current",
     handoverPending: false, handoverMessage: "",
     classifier: null, classifierPending: false, classifierError: "", importPending: false, importReceipt: null, importUncertain: false, importedRevisions: new Map(),
     reports: null, reportsPending: false, reportsError: "", reportOpening: false,
@@ -512,7 +512,7 @@
       photo.setAttribute("role", "button"); photo.tabIndex = 0; photo.setAttribute("aria-haspopup", "dialog"); photo.setAttribute("aria-label", "원본 사진 크게 보기");
       photo.addEventListener("click", open);
       photo.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } });
-      im.addEventListener("load", () => photo.classList.remove("loading"));
+      im.addEventListener("load", () => { photo.classList.remove("loading"); measurePhoto(d, im); });
       im.addEventListener("error", () => {
         photo.classList.remove("loading", "zoomable"); photo.removeAttribute("role"); photo.removeAttribute("tabindex"); photo.removeAttribute("aria-label"); photo.removeAttribute("aria-haspopup");
         photo.replaceChildren(h("p", { class: "photo-empty", text: "사진을 불러오지 못했습니다. 원문 기록은 계속 확인할 수 있습니다." }));
@@ -634,13 +634,70 @@
       h("div", { class: "doc" },
         h("h2", { text: recordName(d) }),
         h("p", { class: "sub", text: (d.source?.synthetic ? "합성 시연 자료" : photoTime(d.time?.photo_parsed) + " 촬영 · " + (L.origin[d.origin] || val(d.origin))) + " · 원본 JSON 보존" }),
-        photoNode(d), compareNode(d), failureCard(d), ...noteNode(d), timelineNode(d),
+        photoNode(d), qualityNode(d), compareNode(d), failureCard(d), ...noteNode(d), timelineNode(d),
         h("div", { class: "folds" },
           h("p", { class: "k", text: "04 · Evidence" }), h("p", { class: "help", text: "판단의 근거가 되는 원본 값, 규칙 검사, 비교 기록입니다. 필요할 때 펼쳐 보세요." }),
           foldSection(valuesCard(d), "원본 환경 기록과 단위"), foldSection(checksCard(d), "규칙 검사와 확인할 이유"),
           foldSection(groupCard(d), "같은 원본 값의 사진 묶음 · 독립 측정 아님"), foldSection(peersCard(d), "다른 기록과 비교"),
           sourceCard(d), foldSection(historyCard(d), "변경 이력 전체"), foldSection(modelEvidence(d), "AI 실행 근거"))));
     renderProps();
+  }
+
+  /* ---------- photo check: advisory hints, never a verdict (docs/quality-checks-eval.md) ---------- */
+  const PHOTO_CODES = new Set(["BLURRY", "TOO_DARK", "TOO_BRIGHT", "LOW_CONTRAST"]);
+  const PHOTO_CHIP = "사진 품질 확인 필요";
+  const QUALITY_TEXT = {
+    BLURRY: { title: "사진이 흐림", label: "선명도", op: "<" },
+    TOO_DARK: { title: "사진이 어두움", label: "밝기", op: "<" },
+    TOO_BRIGHT: { title: "사진이 너무 밝음", label: "밝기", op: ">" },
+    LOW_CONTRAST: { title: "사진의 대비가 낮음", label: "대비", op: "<" },
+    CROP_NOT_TEA: { title: "녹차가 아닌 것 같음", label: "AI 분류", op: "≠" },
+    CROP_LOW_CONFIDENCE: { title: "녹차 분류 신뢰도가 낮음", label: "신뢰도", op: "<" },
+  };
+  function qualityTitle(w) { return w.code === "CROP_NOT_TEA" ? "녹차가 아닌 것 같음 · AI가 " + w.value + "(으)로 분류" : QUALITY_TEXT[w.code].title; }
+  function qualityEvidence(w) {
+    const t = QUALITY_TEXT[w.code];
+    if (w.code === "CROP_NOT_TEA") return t.label + " " + w.value + " " + t.op + " " + w.threshold;
+    const shown = w.code === "CROP_LOW_CONFIDENCE" ? w.value.toFixed(2) : String(t.op === "<" ? Math.floor(w.value) : Math.ceil(w.value));
+    return t.label + " " + shown + " " + t.op + " " + w.threshold;
+  }
+  function photoWarnings(d) {
+    const q = S.quality.get(d.id);
+    if (!q?.metrics) return [];
+    const m = d.model;
+    // A missing score cannot trigger CROP_LOW_CONFIDENCE; CROP_NOT_TEA only needs the crop name.
+    const modelResult = m?.status === "ok" && m.crop ? { crop: { name_ko: m.crop, confidence: Number(m.crop_confidence ?? m.confidence ?? 1) } } : undefined;
+    return window.FarmQuality.assess(q.metrics, modelResult);
+  }
+  function qualityNode(d) {
+    const warnings = photoWarnings(d), card = h("section", { id: "qualityCard", class: "q-card", hidden: !warnings.length, "aria-label": "사진 확인 권장" });
+    if (warnings.length) card.append(h("p", { class: "k", text: "사진 확인 권장" }),
+      h("ul", { class: "q-list" }, warnings.map((w) => h("li", { class: "q-row" }, h("span", { class: "q-title", text: qualityTitle(w) }), h("code", { class: "q-evidence", text: qualityEvidence(w) })))),
+      h("p", { class: "help", text: "확인 권장 표시이며 라벨 오류 판정이 아닙니다" }));
+    return card;
+  }
+  function measurePhoto(d, img) {
+    if (S.quality.has(d.id)) return;
+    let entry;
+    try { entry = { metrics: window.FarmQuality.measure(img) }; }
+    catch (error) { entry = { failed: true }; } // advisory only: a failed measurement shows nothing
+    S.quality.set(d.id, entry);
+    if (S.detail?.id !== d.id) return;
+    const warnings = photoWarnings(S.detail);
+    if (!warnings.length) return;
+    $("qualityCard")?.replaceWith(qualityNode(S.detail));
+    if (decisionDraft(d.id).mode === "hold") renderProps();
+    announce("사진 확인 권장 " + warnings.length + "건");
+  }
+  const suggestsPhotoChip = (d, dr, chip) => chip === PHOTO_CHIP && dr.chip !== chip && photoWarnings(d).some((w) => PHOTO_CODES.has(w.code));
+  async function measurePair(pair, token) {
+    let warnings = [];
+    try {
+      const bitmap = await createImageBitmap(pair.jpg);
+      try { warnings = window.FarmQuality.assess(window.FarmQuality.measure(bitmap)); } finally { bitmap.close(); }
+    } catch (error) { warnings = []; } // advisory only: a failed measurement shows nothing
+    if (token !== pair.token) return;
+    pair.quality = warnings; updateImportState();
   }
 
   /* ---------- right panel: properties, scores, decision ---------- */
@@ -730,8 +787,8 @@
     const next = h("input", { id: "holdNext", type: "text", maxLength: 500, value: holdNext(dr) });
     next.addEventListener("input", () => { dr.next = next.value; dr.nextTouched = true; dr.dirty = true; updateConfirm(d, dr); });
     return h("div", { class: "hold-fields" },
-      h("div", { class: "chips", role: "group", "aria-label": "보류 사유" }, HOLD_CHIPS.map(([chip], index) => h("button", { type: "button", id: "hold-chip-" + index, class: "chip", "aria-pressed": String(dr.chip === chip), text: chip,
-        onclick: () => { dr.chip = dr.chip === chip ? "" : chip; dr.dirty = true; renderProps(); $("hold-chip-" + index)?.focus({ preventScroll: true }); } }))),
+      h("div", { class: "chips", role: "group", "aria-label": "보류 사유" }, HOLD_CHIPS.map(([chip], index) => { const hint = suggestsPhotoChip(d, dr, chip); return h("button", { type: "button", id: "hold-chip-" + index, class: "chip" + (hint ? " suggested" : ""), "aria-pressed": String(dr.chip === chip), title: hint ? "사진 확인 권장 표시가 있어 추천합니다" : null,
+        onclick: () => { dr.chip = dr.chip === chip ? "" : chip; dr.dirty = true; renderProps(); $("hold-chip-" + index)?.focus({ preventScroll: true }); } }, chip, hint ? h("span", { class: "chip-hint", text: " · 추천" }) : null); })),
       h("label", { class: "field" }, h("span", { text: "사유" }), free),
       h("label", { class: "field" }, h("span", { text: "다음 담당자가 확인할 일" }), next));
   }
@@ -1249,7 +1306,7 @@
   }
   async function validatePair(pair) {
     const token = ++pair.token;
-    pair.state = "checking"; pair.message = ""; updateImportState();
+    pair.state = "checking"; pair.message = ""; pair.quality = []; updateImportState();
     let result;
     const jsonProblem = pair.json ? await inspectJson(pair.json) : "";
     if (jsonProblem) result = { state: "jsonbad", message: jsonProblem };
@@ -1260,6 +1317,7 @@
     }
     if (token !== pair.token) return;
     Object.assign(pair, result); updateImportState();
+    if (result.state === "ready") await measurePair(pair, token);
   }
   function addImportFiles(files) {
     const imp = S.imp;
@@ -1281,7 +1339,8 @@
     return h("li", { class: "pair-row", "data-state": pair.state },
       h("span", { class: "stem", text: pair.stem }),
       pair.other ? h("span", { class: "pair-files", text: "지원하지 않는 형식" }) : h("span", { class: "pair-files" }, pres("사진", !!pair.jpg), pres("JSON", !!pair.json)),
-      h("span", { class: "pair-state" }, h("b", { text: PAIR_STATE[pair.state] }), pair.message ? h("span", { class: "pair-msg", text: pair.message }) : null, pair.aiMessage ? h("span", { class: "pair-ai", text: pair.aiMessage }) : null),
+      h("span", { class: "pair-state" }, h("b", { text: PAIR_STATE[pair.state] }), pair.message ? h("span", { class: "pair-msg", text: pair.message }) : null, pair.aiMessage ? h("span", { class: "pair-ai", text: pair.aiMessage }) : null,
+        pair.quality?.length ? h("span", { class: "pair-q" }, pair.quality.map((w) => h("span", { class: "q-chip", text: QUALITY_TEXT[w.code].title + " · 확인 권장" }))) : null),
       h("span", { class: "pair-act" },
         pair.state === "dup" && !locked ? h("button", { type: "button", class: "btn mini", text: "기존 기록 열기", "aria-label": pair.stem + " 기존 기록 열기", onclick: () => openExisting(pair) }) : null,
         removable ? h("button", { type: "button", class: "btn mini", text: "빼기", "aria-label": pair.stem + " 목록에서 빼기", onclick: () => { imp.pairs.delete(pair.other ? "!" + pair.stem : pair.stem); updateImportState(); } }) : null));
@@ -1512,7 +1571,8 @@
       ["원본은 바뀌나요?", "바뀌지 않습니다. 'AI가 맞음'을 고르면 원본 JSON은 그대로 두고 보정값을 따로 기록하며, 변경 이력에 남습니다."],
       ["다른 팀원과 공유되나요?", "가져온 자료와 판단은 이 브라우저의 비공개 작업공간에만 저장됩니다. 팀원에게 전달하려면 보고서를 HTML·CSV·JSON으로 내려받아 공유하세요."],
       ["시연 예제는 무엇인가요?", "기능을 둘러보기 위한 가상 자료입니다. 실제 모델을 호출하지 않고, 판단을 저장해도 내 실제 자료에는 반영되지 않습니다."],
-      ["개인정보는 어떻게 되나요?", "'자료 가져오기'를 누르기 전에는 아무것도 업로드하지 않습니다. 사진은 'AI 비교'를 체크했을 때만 실험 모델로 전송됩니다."]];
+      ["개인정보는 어떻게 되나요?", "'자료 가져오기'를 누르기 전에는 아무것도 업로드하지 않습니다. 사진은 'AI 비교'를 체크했을 때만 실험 모델로 전송됩니다."],
+      ["'사진 확인 권장'은 무엇인가요?", "사진이 흐리거나(선명도 90 미만), 어둡거나(밝기 110 미만), 너무 밝거나(220 초과), 대비가 낮을 때(17 미만) 표시합니다. 상세 화면에서는 AI가 녹차가 아닌 작물로 분류했거나 녹차 분류 신뢰도가 0.8 미만일 때도 표시합니다. 기준값은 제공된 녹차 샘플 사진에서 정한 것이라 다른 농장·카메라·조명에서는 맞지 않을 수 있습니다. 식물이 없는 사진, 일부만 과노출된 사진, 가림, 병해, 라벨 오류는 찾지 못합니다. 확인을 돕는 표시일 뿐 라벨 오류 판정이 아니며 가져오기와 판단을 막지 않습니다."]];
     const rule = (title, text) => h("div", { class: "rule-item" }, h("strong", { text: title }), h("p", { class: "help", text }));
     v.append(h("div", { class: "stack help-view" },
       h("section", { class: "card" }, h("p", { class: "k", text: "01 · Flow" }), h("h2", { text: "검수는 이렇게 진행합니다" }),
